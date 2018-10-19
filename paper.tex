@@ -1,0 +1,485 @@
+\documentclass[10pt]{sigplanconf}
+
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{listings}
+\usepackage{amsmath}
+\usepackage[font={small}]{caption}
+\newcommand{\mycomment}[1]{}
+\newcommand{\dfn}[1]{\textit{#1}} % For initial definitions of terms
+\newcommand{\myfig}[3]
+ {
+ \begin{figure}
+ \centerline{\includegraphics[width=#2]{graph/#1.pdf}}
+ \caption{\sl \small #3}
+ \label{#1:fig}
+ \vspace*{-0.15in}
+ \end{figure}
+ }
+\newcommand{\myfigcross}[3]
+{
+\begin{figure*}[ht]
+\centerline{\includegraphics[width=#2]{graph/#1.pdf}}
+\caption{\sl \small #3}
+\label{#1:fig}
+\vspace*{-0.15in}
+\end{figure*}
+}
+
+% For marking text we're probably dropping.
+\newcommand{\ignore}[1]{}
+
+% For marking text that we might like to include in a final draft, if
+% accepted to RADIO, but that will not fit within the 5-page limit.
+\newcommand{\saveforlater}[1]{}
+
+% For marking important work items.
+\newcommand{\todo}[1]{\textbf{TODO: #1}}
+
+\lstset{ %
+    captionpos=b,
+    frame=single
+}
+
+\begin{document}
+\title{Bringing the Power of eBPF to Open vSwitch}
+\authorinfo{
+  \(
+  \begin{matrix}
+    % Alphabetical order.
+    \textrm{William Tu} & \textrm{Joe Stringer} & \textrm{Yifeng Sun} & \textrm{Yi-Hung Wei}\\
+    \textrm{u9012063@gmail.com} & \textrm{stringerjoe@vmware.com} & \textrm{pkusunyifeng@gmail.com} & \textrm{yihung.wei@gmail.com} \\
+  \end{matrix}
+  \)
+}
+{VMware Inc.}{}
+
+\maketitle
+
+\begin{abstract}
+In this paper we discuss two projects, the OVS-eBPF project, with
+the goal of re-writing existing openvswitch kernel module's feature
+into eBPF code at TC attachment hook.
+And the OVS-AFXDP project, where we 
+
+
+\end{abstract}
+
+\section{Introduction}\label{introduction}
+Among the various ways of using eBPF, OVS has been exploring the power of eBPF in three:
+(1) attaching eBPF to TC, (2) offloading a subset of processing to XDP, and (3) by-passing
+the kernel using AF\_XDP. Unfortunately, as of today, none of the three approaches satisfies
+the requirements of OVS. In this paper, we share the challenges we faced, experience learned,
+and seek for feedbacks from the community for future direction.
+
+Attaching eBPF to TC started first with the most aggressive goal: we planned to re-implement
+the entire features of OVS kernel datapath under net/openvswitch/* into eBPF code.
+We worked around a couple of limitations, for example, the lack of TLV support led us to
+redefine a binary kernel-user API using a fixed-length array; and without a dedicated way to
+execute a packet, we created a dedicated device for user to kernel packet transmission,
+with a different BPF program attached to handle packet execute logic.
+Currently, we are working on connection tracking.
+Although a simple eBPF map can achieve basic operations of conntrack table lookup and commit,
+how to handle NAT, (de)fragmentation, and ALG are still under discussion.
+
+Moving one layer below TC is called XDP (eXpress Data Path), a much faster layer for packet
+processing, but with almost no extra packet metadata and limited BPF helpers support.
+Depending on the complexity of flows, OVS can offload a subset of its flow processing to XDP
+when feasible. However, the fact that XDP has fewer helper function support implies that either
+1) only very limited number of flows are eligible for offload, or 2) more flow processing logic
+needed to be done in native eBPF.
+ 
+AF\_XDP is another form of XDP but providing a socket interface for control plane and a shared
+memory API for accessing packets from userspace application. OVS today has another full-fledged
+datapath implementation in userspace, called dpif-netdev, used by DPDK community.
+By treating the AF\_XDP as a fast packet-I/O channel, the OVS dpif-netdev can satisfy most of the
+features. We are working on building the prototype and evaluating its performance.
+
+
+Existing OVS consists of three datapath implementations:
+dpif-netlink
+dpif-netdev
+dpif-windows
+In this paper, OVS-eBPF project adds a new datapath type
+dpif-bpf
+and OVS-AFXDP project reuses the dpif-netdev interface, with
+linux netdev receiving/sending packets from AFXDP sockets.  
+
+\section{Background}
+
+\subsection{OVS Forwarding Model}
+
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+              
+                +-------------------+
+ slow path      |    ovs-vswitchd   |
+                +-----^-------------+
+                      |       |flow installation
+----------------------|-------|-----------------
+ fast path     upcall |       | 
+ (datapath)  +----------------v---------+ 
+  packets--> | parse, lookup, actions   |  --> output
+             +--------------------------+
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{An example of mirrored packet with outer header containing
+the GRE and ERSPAN header, followed by the innter Ethernet frame.}
+\label{erspanhdr}
+\vspace{-1.0em}
+\end{figure}
+
+OVS is widely used in virtualized data center environments as a software
+switching layer inside various operating systems, including FreeBSD,
+Windows Hyper-V, Solaris and Linux. As shown in
+Figure~\ref{ovsintro:fig}, the architecture of OVS consists of two major
+components: a slow path and a fast path. OVS begins processing packets
+in its datapath, the fast path, shortly after the packet is received by the NIC in the host OS.
+The OVS datapath first performs packet parsing to extract relevant protocol
+headers from the packet and store it locally in a manner that is efficient for
+performing lookups (flow key), then it uses this information to look into the
+match/action cache (flow table) and determines what needs to be done for this
+packet. If there is no match in the flow table, the datapath passes the packet
+from the kernel up to the slow path, \verb+ovs-vswitchd+, which maintains the
+full determination of what needs to be executed to modify and forward
+the packet correctly.  This process is called packet {\em upcall} and
+usually happens at the first packet of a flow seen by the OVS datapath.
+If the packet matches in this flow table, then the OVS datapath executes its
+corresponding actions from the flow table lookup result and updates its flow
+statistics.
+
+In this model, the \verb+ovs-vswitchd+ determines how the packet should be handled,
+and passes the information to the datapath inside the kernel using a
+Linux generic netlink interface.  Over the years the OVS datapath features evolved.
+The initial OVS datapath used a microflow cache for its flow table,
+essentially caching exact-match entries for each
+transport layer connection's forwarding decision.  And in later versions,
+two layers of caching were used: a microflow cache and a megaflow cache,
+which caches forwarding decisions for traffic aggregates beyond individual
+connections.  In recent versions of OVS, datapath implementations include
+features such as connection tracking, stateful network address translation, and
+support for layer 3 tunneling protocols.
+
+\mycomment{
+As each new feature in OVS datapath requires deep knowledge and programming
+paradigm of the target operating system, e.g., how Linux packets are received,
+how Windows kernel module does firewalling, and each operating system
+community has its own software upstream and maintenance processes, the software
+development cycle of a new datapath feature becomes complex and requires
+detailed platform-specific knowledge. Each platform introduces its own
+development and maintenance burden, and it is common for new features to take
+six months or more before implementations are available across all datapaths.
+As a result, providing a programmable OVS datapath which allows extending the
+features flexibly with lower maintenance cost becomes a critical requirement.
+}
+
+\subsection{eBPF Basics}\label{sec:ebpf}
+Berkeley Packet Filter, BPF, is an instruction set architecture
+proposed by Steven McCanne and Van Jacobson in 1993~\cite{cbpf}.  
+BPF was designed as a generic packet filtering solution and is widely
+used by every network operator today, through the well-known tcpdump/wireshark
+applications. A BPF interpreter is attached early in the packet receive call
+chain, and it executes a BPF program as a list of instructions.
+A BPF program typically parses a packet and decides
+whether to pass the packet to a userspace socket.  With its simple architecture
+and early filtering decision logic, it can execute this logic efficiently.
+
+%P2 from cBPF to eBPF
+For the past few years, the Linux kernel community has improved the traditional
+BPF (now renamed to classic BPF, cBPF) interpreter inside the kernel with
+additional instructions, known as extended BPF (eBPF). eBPF was introduced with
+the purpose of broadening the programmability of the Linux kernel. Within the
+kernel, eBPF instructions run in a virtual machine environment. The virtual
+machine provides a few registers, stack space, program counter, and a way to
+interact with the rest of the kernel through a mechanism called helper
+functions.  Similar to cBPF, eBPF operates in an event-driven model on a
+particular hook point; each hook point has its own execution {\em context} and
+execution at the hook point only starts when a particular type of event fires.
+A BPF program is written against a specific context. For example, a BPF program
+attached to a raw socket interface has a context which includes the packet, and
+the program is only triggered to run when there is an incoming packet to the
+raw socket.
+
+% eBPF map, helper, tail call and syscall
+%helper
+The eBPF virtual machine provides a completely isolated environment for its
+bytecode running inside; in other words, it cannot arbitrarily call other
+kernel functions or access into memory outside its own environment. To interact
+with the outside world, the eBPF architecture white-lists a set of helper
+functions that a BPF program can call, depending on the {\em context} of the
+BPF program.  For example, a BPF program attached to raw socket in a packet
+context could invoke VLAN push or pop related helper functions, while a BPF
+program with a kernel tracing context could not. %The complete list of helper
+%functions can be found at \verb+linux/include/uapi/linux/bpf.h+.
+
+%map
+To store and share state, eBPF provides a mechanism to interact with a variety
+of key/value stores, called \textit{maps}. eBPF maps reside in the kernel, and can be
+shared and accessed from eBPF programs and userspace applications. eBPF
+programs can access maps through helper functions, while userspace applications
+can access maps through BPF system calls. There are a variety of map types for
+different use cases, such as hash tables or arrays. These are created by a
+userspace program and may be shared between multiple eBPF programs running in
+any hook point.
+
+%tail call
+Finally, eBPF tail call~\cite{tailcall} is a mechanism allowing one eBPF program to trigger execution of 
+another eBPF program, providing users the flexibility of composing a chain of
+eBPF programs with each one focusing on particular features.  Unlike a
+traditional function call, this tail call mechanism calls another program
+without returning back to the caller's program. The tail call reuses the
+caller's stack frame, which allows the eBPF implementation to minimize call
+overhead and simplifies verification of eBPF programs.
+% end of bpf intro
+
+\subsection{XDP: eXpress Data Path}
+\myfig{tcebpf}{2.6in}{The workflow of TC and XDP eBPF development process and its
+packet flow.  The eBPF program compiled by LLVM+clang is loaded into the kernel
+using iproute. The kernel runs the program through a verification stage, and
+subsequently attaches the program to the TC/XDP ingress hook point.  Once
+successfully loaded, an incoming packet received by XDP/TC ingress will execute the
+eBPF program.}
+
+There are several hook points where eBPF programs may be attached in recent
+Linux kernels. XDP is still an eBPF program, but its attachment point is at the
+lowest level of the network stack.  Due to its unique attachment point, the XDP
+has its own {\em context}; the input parameters to the XDP eBPF program and return
+values have different meanings than the TC eBPF program. XDP shows performance
+closed to line rate of the device, because the XDP program is triggered immediately
+at the network device driver's packet receiving code path.
+Due to its lowest hook point at the networking stack, XDP input parameter has only
+pointer to the beginning and end of the packet data plus a few metadatas.
+XDP also supports accessing to eBPF maps and tail calls, but with much
+less number of helper functions than the eBPF program at TC hook.
+
+Figure~\ref{tcebpf:fig}
+shows the typical workflow for installing an eBPF program to the TC/XDP hook point,
+and how packets trigger eBPF execution.  Clang and LLVM takes a program
+written in C and compiles it down to the eBPF instruction set, then emits an
+ELF file that contains eBPF instructions.  An eBPF loader, such as iproute,
+takes the ELF file, parses the programs and maps information from it and
+issues BPF syscalls to load the program.  If it passes the BPF verifier,
+then the program is attached to the hook point (in this case, TC/XDP), and
+subsequent packets through the TC/XDP ingress hook will trigger execution of the
+eBPF programs.
+
+\subsection{AF\_XDP Socket}
+% afxdp
+AF\_XDP is a new Linux address family that aims for high packet I/O
+performance. Traditionally, a userspace program receives packets from
+kernel through the socket API.  By creating a socket with address family
+such as AF\_PACKET, the userspace program can receive/send the raw packets
+at the device driver layer.  Although the AF\_PACKET family has been using
+in many places such as tcpdump, its performance does not catch up the the
+recent high speed network devices, such as 40G/100G NICs.
+Performance evaluation~\cite{danialafpacket,johnafxdp} of AF\_PACKET
+shows less than 2 million packets per second using single core.
+
+AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{afxdp} 
+The core idea behind the AF\_XDP is to leverage the XDP eBPF program's
+early access to the raw packet, and create a high speed channel from the XDP to
+a userspace socket interface. In other word, AF\_XDP socket family connects the
+XDP packet receving/sending path to the user space, bypassing the rest of the
+Linux networking stacks.
+An AF\_XDP socket, called XSK, is create using the normal socket() system
+call. Unlike AF\_PACKET using the send() and receive() syscalls,
+XSK introduces two rings in userspace: the RX ring and the TX ring.
+The userspace program using XSK needs to properly configure and maintain
+the RX and TX ring structure in order to receive and send packets.
+
+For example, to receive packets, a set of RX descriptors pointing to empty
+packet buffer needs to be filled into the RX ring.  When packets arrives,
+the userspace program fetches the packet data from the desciptors, and
+refill the empty buffer to the RX ring structure, in order to receive new
+incoming packets.  For sending packets, a set of descriptors pointing the
+packet buffer with contents is filled to the TX ring (FILL queue).
+Then, the userspace
+program issues send() system call.  It is up to the userspace program to
+make sure whether the packets have been sent or not, by checking the TX
+ring structure.
+
+All the packet data buffers used in TX/RX ring are allocated from a specific
+memory area called UMEM which consists of a number of fixed size chunks.
+A descriptor in RX/TX ring points to the element in UMEM by its address.
+The address is simply an offset within the entire UMEM memory region.
+The UMEM also has two rings: the FILL ring and the COMPLETION ring.
+The Fill ring is used by the application to send down addr for the kernel
+to fill in with RX packet data. References to these frames will then
+appear in the RX ring once each packet has been received. The 
+completion ring, on the other hand, contains frame addr that the 
+kernel has transmitted completely and can now be used again by user
+space, for either TX or RX. 
+
+Thus, the frame addrs appearing in the 
+completion ring are addrs that were previously transmitted using the 
+TX ring. In summary, the RX and FILL rings are used for the RX path
+and the TX and COMPLETION rings are used for the TX path.
+
+
+\section{OVS eBPF Datapath}
+\mycomment{
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+
+               _
+              |   +-------------------+
+              |   |    ovs-vswitchd   |
+              |   +-------------------+
+    userspace |   |      ofproto      |<-->OpenFlow controllers
+              |   +--------+-+--------+  
+              |   | netdev | |ofproto-|
+              |   +--------+ |  dpif  |
+                  | netdev | +--------+
+   *eBPF hook --> |provider| |  dpif  |
+                  +---||---+ +--------+
+              |       ||     |  dpif  | <--- *eBPF provider
+              |       ||     |provider|
+              |_      ||     +---||---+
+                      ||         ||
+               _  +---||-----+---||---+
+              |   |          |datapath| <--- *eBPF datapath
+       kernel |   |          +--------+
+              |   |                   |
+              |_  +--------||---------+
+                           ||
+                        physical
+                           NIC
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{An example of mirrored packet with outer header containing
+the GRE and ERSPAN header, followed by the innter Ethernet frame.}
+\label{erspanhdr}
+\vspace{-1.0em}
+\end{figure}
+\subsection{Tunnel Support}
+\subsection{Megaflow Support}
+\subsection{Connection Tracking Support}
+}
+
+\section{Userspace OVS with AF\_XDP}
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+              |   +-------------------+
+              |   |    ovs-vswitchd   |<-->ovsdb-server
+              |   +-------------------+
+              |   |      ofproto      |<-->OpenFlow controllers
+              |   +--------+-+--------+ 
+              |   | netdev | |ofproto-|
+    userspace |   +--------+ |  dpif  |
+              |   | AF_XDP | +--------+
+              |   | netdev | |  dpif  |
+              |   +---||---+ +--------+
+              |       ||     |  dpif- |
+              |       ||     | netdev |
+              |_      ||     +--------+  
+                      ||         
+               _  +---||-----+--------+
+              |   | XDP program +     |
+ Linux kernel |   |   eBPF map        |
+              |_  +--------||---------+
+                           ||
+                        physical
+                           NIC
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{OVS Architecture AF\_XDP}
+\label{ovsafxdp}
+\vspace{-1.0em}
+\end{figure}
+
+\subsection{Datapath and Netdev}
+OVS includes a userspace datapath interface (dpif) implemenation, called dpif-netdev.
+Unlike the dpif-netlink which talks to the Linux Open vSwitch kernel
+module through netlink API, the dpif-netdev works completely in userspace.
+As a result, dpif-netdev expects to receive and send packets from its userspace
+interface.  One major use case of dpif-netdev is OVS-DPDK~\cite{ovsdpdk},
+where the packet reception and transmission are all done in DPDK's userspace
+library. The dpif-netdev is designed to be agnostic to how the network
+device accessing the packets, by an abstraction layer called netdev.
+So Packets might come from DPDK packet I/O library,
+a Linux AF\_PACKET socket API, or in our case, the AF\_XDP socket interface,
+as long as each mechanism implements its own netdev interface.
+Once dpif-netdev receives a packet, it follows the same mechanism doing
+parse, lookup the flow table, and apply actions to the packet.
+
+Figure~\ref{ovsafxdp} shows the architecture of Userspace OVS with AF\_XDP.
+We implement a new netdev type called netdev-afxdp, which receives and transmits
+packets using the XSK.
+In order for XSK to work, we insert a XDP program and a eBPF map with   
+interact with XDP program to forward packets to the AF\_XDP socket.
+Once the AF\_XDP netdev receives a packet, it passes the packet to the
+dpif-netdev for packet processing.
+
+\mycomment{
+/* PMD: Poll modes drivers.  PMD accesses devices via polling to eliminate
+ * the performance overhead of interrupt processing.  Therefore netdev can
+ * not implement rx-wait for these devices.  dpif-netdev needs to poll
+ * these device to check for recv buffer.  pmd-thread does polling for
+ * devices assigned to itself.
+ *
+ * DPDK used PMD for accessing NIC.
+ *}
+
+\subsection{AF\_XDP netdev configuration}
+ovs-vswitchd controls and manages the XDP program and maps.
+When users attach a AF\_XDP netdev to the OVS bridge, the netdev-afxdp
+does the following steps:
+We implemnet most of the logic in lib/netdev-linux.c
+{
+\begin{verbatim}
+    ovs-vsctl add-br br0
+    ovs-vsctl add-port br0 eth0 -- \
+        set int eth0 type="afxdp"
+\end{verbatim}
+}
+\begin{enumerate}
+\item Attach a XDP program to the netdev queue:
+The XDP program OVS attaches is fixed and consists
+of only a few line of code, which receives the packet and
+calls the \texttt{bpf\_redirect\_map()} helper function with
+the XSK eBPF maps and key equals zero.
+
+\item Create a AF\_XDP socket:
+This requires creating the XSK socket by calling socket() syscall,
+setting up its RX and TX ring buffer, allocating a UMEM region,
+and setting up FILL/COMPLETION ring of the UMEM.
+
+\item Load and configure the XSK eBPF map:
+The XSK eBPF maps consists of key value pairs, where key is an u32 index and value is
+the netdev's queue ID.  In our case, we simply program one entry to the map with
+key equals zero and the file descriptor, fd, of the XSK as its value.
+As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
+forwards the packet to the XSK.
+\end{enumerate}
+
+When a netdev-afxdp is detached or closed by user,
+ovs-vswitchd closes the XSK socket, free its memory, and unload the eBPF program and map.
+
+\subsection{Packet Reception and Transmission}
+
+When receiving the packets from XSK, netdev-afxdp implements the following
+operations:
+\begin{enumeration}
+\item Get N free elements from UMEM
+\item Fille 
+
+
+\end{enumeration}
+When sending out the packets 
+
+\subsection{Performance Evaluation}
+PMD
+HugePage
+UMEM element list
+Batching
+
+\bibliography{paper.bib}
+\bibliographystyle{plain}
+
+\end{document}
