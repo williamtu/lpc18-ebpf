@@ -606,12 +606,81 @@ In addition, the original four packet buffer from eth1, {1, 2, 3, 4}, is
 recycled back to eth1's UMEM freelist.
 
 \subsection{Performance Evaluation}
-When sending and receivng packets using AF\_XDP with OVS, two CPUs show
+% testbed
+
+When forwarding packets using AF\_XDP with OVS, two CPUs show up
 100\% utilitization:
 \begin{itemize}
-\item ksoftirqd:
-\item ovs-vswitchd:
+\item ovs-vswitchd: This is the process keeps doing the send and receive steps
+in Figure~\ref{afxdprx,afxdptx}.
+\item ksoftirqd: This is the kernel software interrupt thread handling the
+incoming packets, triggering XDP program to pass to the XSK, and also processing
+transmission.
 \end{itemize}
+
+For all our experiments, we use a microbenchmark program, called xdpsock,
+as the baseline to compare with our implementation.
+xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
+to do simply dropping the packet, rxdrop, or forwarding the packet to the same port as
+it receives, l2fwd.  In our testbed, we measured $19Mpps$ for rxdrop and $17Mpps$ for
+l2fwd.
+
+Compared to xdpsock, ovs-vswitchd adds on top of it a UMEM memory pool,
+and packets parsing, lookup and action execution.
+Our initial prototype shows pretty terrible performance, only $0.5Mpps$ rxdrop.
+We investigated and our first fix is to enable OVS's PMD-mode,
+Poll-Mode-Driver, to the afxdp netdev.
+In OVS, a non-pmd mode netdev does packet receiption by putting all the receiving
+netdev's file descript together and ovs-vswitch polls them when there is an fd ready
+to perform I/O.  As a result, the fd of the XSK is {\em shared} with other fds, and
+we observed that the poll system call has pretty high overhead.
+
+Applying OVS's PMD netdev avoids these problems and improving the rxdrop performance
+from $0.5Mpss$ to $3Mpps$.  Ideally, receing packets from XSK does not need to context
+switch to into kernel as mentioned in steps~\ref{afxdprx}. So an ideal implementation
+should show minimal context switches with most of the CPU stays in userspace. 
+When enabling PMD netdev for afxdp, ovs-vswitch can be
+configured to create a {\em dedicated} thread for the packet I/O.  
+In our case, we create a thread for each XSK receive queue which keeps polling
+the RX ring for new packets.  Each round of receive polling processes a batch of
+packet, up to maximum of 32 packets. In addition, we enable high memory page 1GB to
+reduce the page fault overhead.  With the above fixes/optimizations, the rxdrop
+performance increases to around $10Mpps$
+
+For every stage of the optimization, we use Linux perf extensively, e.g., perf stat
+and perf record/report.  With the above new design, we observe the new bottleneck
+is at the UMEM memory pool we introduce to maintain the UMEM freelist, and the
+packet metadata allocation, struct dp\_packet, for every receiving packet.
+We introduce two major API, umem\_elem\_get(), which gets N free element from the
+UMEM freelist, and umem\_elem\_put(), which places back the free UMEM buffer to
+the freelist.
+producer 
+consumer
+We implemented three data structures of UMEM memory pool as below
+to compare their performance
+\begin{itemize}
+\item list\_head: Similar to Linux kernel's list\_head, each element contains it
+UMEM addr, and a next pointer points to next free element. Elements are sparse in
+memory. Consumer always takes the first element, head, and producer also place back
+from the head of the list.
+\item ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
+allocated in continuous memory region, and pointers (head and tail) point for
+Consumer takes elements from the tail and when placing back, producer, puts
+them into where head pointer points to.
+\item ptr\_stack: Similar to ptr\_ring, but consumer and producer always use
+the top few element, thus similar to push pop. Compared
+
+\end{itemize}
+% lock
+% push/pop
+% preallocate array
+Since the UMEM 
+
+
+We then observe that the UMEM memory pool implementation ha
+
+
+
 PMD
 HugePage
 UMEM element list
@@ -619,6 +688,8 @@ Batching
 2-CPU operation
 non-blocking send
 non-block receive
+pre-allocation dp\_packet
+rxhash
 
 \mycomment{
 /* PMD: Poll modes drivers.  PMD accesses devices via polling to eliminate
