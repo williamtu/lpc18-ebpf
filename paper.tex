@@ -300,6 +300,19 @@ program issues send() system call.  It is up to the userspace program to
 make sure whether the packets have been sent or not, by checking the TX
 ring structure.
 
+% concept
+Application still HW agnostic with ZC
+Each application gets its own packet buffer and TX/RX descriptor rings
+Packet buffers can be shared if desired
+  TX/RX descriptor rings always private to process
+% AF\_XDP has 3 mode
+% zero copy, native mode,
+XDP\_SKB:
+– Works on any netdevice using sockets and generic XDP path
+XDP\_DRV:
+– Works on any device with XDP support (all three NDOs)
+XDP\_DRV + ZC:
+– Need buffer allocator support in driver + a new NDO for TX
 All the packet data buffers used in TX/RX ring are allocated from a specific
 memory area called UMEM which consists of a number of fixed size chunks.
 A descriptor in RX/TX ring points to the element in UMEM by its address.
@@ -416,16 +429,6 @@ interact with XDP program to forward packets to the AF\_XDP socket.
 Once the AF\_XDP netdev receives a packet, it passes the packet to the
 dpif-netdev for packet processing.
 
-\mycomment{
-/* PMD: Poll modes drivers.  PMD accesses devices via polling to eliminate
- * the performance overhead of interrupt processing.  Therefore netdev can
- * not implement rx-wait for these devices.  dpif-netdev needs to poll
- * these device to check for recv buffer.  pmd-thread does polling for
- * devices assigned to itself.
- *
- * DPDK used PMD for accessing NIC.
- *}
-
 \subsection{AF\_XDP netdev configuration}
 ovs-vswitchd controls and manages the XDP program and maps.
 When users attach a AF\_XDP netdev to the OVS bridge, the netdev-afxdp
@@ -438,6 +441,7 @@ We implemnet most of the logic in lib/netdev-linux.c
         set int eth0 type="afxdp"
 \end{verbatim}
 }
+
 \begin{enumerate}
 \item Attach a XDP program to the netdev queue:
 The XDP program OVS attaches is fixed and consists
@@ -456,28 +460,176 @@ the netdev's queue ID.  In our case, we simply program one entry to the map with
 key equals zero and the file descriptor, fd, of the XSK as its value.
 As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
 forwards the packet to the XSK.
+
+\item Initialize the FILL queue
+Before any packet arrival, the rest three queues: RX, TX and COMPLETION
+remains the same
 \end{enumerate}
 
 When a netdev-afxdp is detached or closed by user,
 ovs-vswitchd closes the XSK socket, free its memory, and unload the eBPF program and map.
 
+memory allocation:
+
+% 1 UMEM per XSK per queue, no sharing
+For each netdev, ovs-vswitchd attach XSK to each 
+For each XSK
+memorypool
+We implement a UMEM freelist to keep track of the used/unused element
+
+To handle multiple 
 \subsection{Packet Reception and Transmission}
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+UMEM: total 8 elements, each has 2K chunk size
+                 +-------------------------------+
+                 |   |   |   |   |   |   |   |   |
+                 +-------------------------------+
+            addr:  1   2   3   4   5   6   7  8 
+(1) Initial Stat
+           -------------------          UMEM freelist
+FILL Qu  ...| 1 | 2 | 3 | 4 | ...       {5, 6, 7, 8}
+           -------------------
+           -------------------
+RX ring  ...|   |   |   |   | ...
+           -------------------
+(2) 4 Packets Arrive
+           -------------------          UMEM freelist
+FILL Qu  ...|   |   |   |   | ...       {5, 6, 7, 8}
+          --------------------
+           -------------------
+RX ring  ...| 1 | 2 | 3 | 4 | ...
+           -------------------
+(3) Get 4 free UMEM elemet and refill
+           -------------------          UMEM freelist
+FILL Qu  ...| 5 | 6 | 7 | 8 | ...       {} 
+           -------------------
+           -------------------
+RX ring  ...| 1 | 2 | 3 | 4 | ...
+           -------------------
+(4) Pass packets {1, 2, 3, 4} to dpif-netdev
+    for parse, lookup, and actions.
 
-When receiving the packets from XSK, netdev-afxdp implements the following
-operations:
-\begin{enumeration}
-\item Get N free elements from UMEM
-\item Fille 
+(5) Recycle to UMEM freelist, goto step (2)
+            +-------------------        UMEM freelist
+FILL Qu  ...| 5 | 6 | 7 | 8 | ...       {1, 2, 3, 4}
+            +------------------
+           -------------------
+RX ring  ...|   |   |   |   | ...
+           -------------------
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{An example of how OVS programs the FILL queue and RX ring when
+processing incoming AF\_XDP packets.}
+\label{afxdprx}
+\vspace{-1.0em}
+\end{figure}
+Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the FILL queue and
+the RX ring for receving packets from XSK.  For simplicity to demonstrate
+how AF\_XDP works, assume that there are only eight UMEM buffers, with each buffer's
+size equals 2KB.  Initially at step 1, ovs-vswitchd fills four empty UMEM elem into
+the FILL queue and waits for incoming packets.  When there are incoming packets,
+at step 2, the FILL queue's four buffer elems have been consumed and moved
+to the RX ring.  In order to keep receiving packets, ovs-vswitchd gets another
+four empty UMEM elems from thte UMEM freelist, and fills into FILL queue (step 3).
+Then ovs-vswitchd creates the metadata needed for the four packet
+buffer, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
+the dpif-netdev layer for parse, lookup and action executions.
+Finally, when ovs-vswitchd finishes processing the UMEM buffer, a recycle
+mechanism is triggered to place these buffer back to UMEM freelist (step 5).
+Step 5 makes sure that there are always available elems in FILL queue, so
+that the underlying XDP program in kernel can keep placing packets into
+the FILL queue while the userspace ovs-vswitchd is processing the previous
+received packets.
+When step 5 finishes, ovs-vswitchd goes back to step 2, waiting and processing
+new packets.
 
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+ dpif-netdev has 4 packets at UMEM:{1, 2, 3, 4}
+ from eth1 and plan to send to eth2.
+(1) Get 4 free element from eth2 UMEM, copy packet data to it
+(2) Create TX descriptors and place into TX ring
+           -------------------        eth2 UMEM freelist
+TX ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
+           -------------------
+           -------------------
+COMPL q  ...|   |   |   |   | ...
+           -------------------
+(3) Issue send syscall to eth2's XSK
+(4) Packet transmission is completed
+           -------------------        eth2 UMEM freelist
+TX ring  ...|   |   |   |   | ...       {1, 2, 3, 8}
+           -------------------
+           -------------------
+COMPL q  ...| 4 | 5 | 6 | 7 | ...
+           -------------------
+(5) Recycle to eth2 UMEM
+           -------------------        eth2 UMEM freelist
+TX ring  ...|   |   |   |   | ...       {1, 2, 3, 4,
+           -------------------           5, 6, 7, 8}
+           -------------------
+COMPL q  ...|   |   |   |   | ...
+           -------------------
+(6) Recycle {1, 2, 3, 4} to eth1's UMEM 
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{An example of how OVS programs the COMPLETION queue and TX ring when
+processing incoming AF\_XDP packets from one netdev and sending to another netdev.}
+\label{afxdptx}
+\vspace{-1.0em}
+\end{figure}
 
-\end{enumeration}
-When sending out the packets 
+Figure~\ref{afxdptx} shows the process for sending packets to the XSK.
+Assuming that ovs-vswitch has a a bridge and two ports: eth1 and eth2.
+And there is a flow entry showing
+\texttt{in\_port=eth1, ..., actions=..., output:eth2}, meaning to forwarding
+packets received from eth1 to eth2.
+Assuming that both eth1 and eth2 are configured with AF\_XDP support.
+
+Initially, assume ovs-vswitchd receives four packets {1, 2, 3, 4} from eth1's XSK
+To send to eth2 using its XSK, ovs-vswitchd first gets four packet buffers,
+{4, 5, 6, 7}, from eth2's UMEM freelist and copy the packet data to their
+packet buffer in UMEM.  Then TX descriptors for the four packets are
+created and placed into eth2's TX ring (step 2).
+At step 3, send syscall is issued to signal the kernel to start transmit.
+As the send in XSK is asynchronos and send syscall only return return zero when
+no error, ovs-vswitch has to poll the COMPLETION queue to make sure these four
+packets have been sent out (step 4).
+Once the four packets' descriptors shown up at the COMPLETION ring, at step 5,
+ovs-vswitchd recycles their UMEM elememnts back to the eth2's UMEM freelist.
+In addition, the original four packet buffer from eth1, {1, 2, 3, 4}, is
+recycled back to eth1's UMEM freelist.
 
 \subsection{Performance Evaluation}
+When sending and receivng packets using AF\_XDP with OVS, two CPUs show
+100\% utilitization:
+\begin{itemize}
+\item ksoftirqd:
+\item ovs-vswitchd:
+\end{itemize}
 PMD
 HugePage
 UMEM element list
 Batching
+2-CPU operation
+non-blocking send
+non-block receive
+
+\mycomment{
+/* PMD: Poll modes drivers.  PMD accesses devices via polling to eliminate
+ * the performance overhead of interrupt processing.  Therefore netdev can
+ * not implement rx-wait for these devices.  dpif-netdev needs to poll
+ * these device to check for recv buffer.  pmd-thread does polling for
+ * devices assigned to itself.
+ *
+ * DPDK used PMD for accessing NIC.
+ *}
+
 
 \bibliography{paper.bib}
 \bibliographystyle{plain}
