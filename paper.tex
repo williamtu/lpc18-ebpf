@@ -139,7 +139,7 @@ Comparison of the OVS-eBPF project and OVS-AFXDP project.
 OVS is widely used in virtualized data center environments as a software
 switching layer inside various operating systems, including FreeBSD,
 Windows Hyper-V, Solaris and Linux. As shown in
-Figure~\ref{ovsintro:fig}, the architecture of OVS consists of two major
+Figure~\ref{ovsintro}, the architecture of OVS consists of two major
 components: a slow path and a fast path. OVS begins processing packets
 in its datapath, the fast path, shortly after the packet is received by the NIC in the host OS.
 The OVS datapath first performs packet parsing to extract relevant protocol
@@ -179,18 +179,23 @@ support for layer 3 tunneling protocols.
                       |       |flow installation
 ----------------------|-------|-----------------
  fast path     upcall |       | 
- (datapath)  +----------------v---------+ 
-  packets--> | parse, lookup, actions   |  --> output
-             +--------------------------+
+ (datapath)  +----------------v---------------+ 
+  packets--> | parse, lookup match, actions   |  --> output
+             |        & action table          |
+             +--------------------------------+
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{An example of mirrored packet with outer header containing
-the GRE and ERSPAN header, followed by the innter Ethernet frame.}
-\label{erspanhdr}
+\caption{
+The forwarding plane of OVS consists of two components;
+ovs-vswitch handles the complexity of the OpenFlow protocol, and the
+datapath acts as a caching layer to optimize the performance.  A flow
+missed by the match/action table in the datapath triggers an {\em
+upcall}, which forwards the information to ovs-vswitchd.  ovs-vswitchd
+installs an appropriate flow entry into the datapath's match/action table.}
+\label{ovsintro}
 \vspace{-1.0em}
 \end{figure}
-
 
 \subsection{eBPF Basics}\label{sec:ebpf}
 Berkeley Packet Filter, BPF, is an instruction set architecture
@@ -682,16 +687,16 @@ Once the AF\_XDP netdev receives a packet, it passes the packet to the
 dpif-netdev for packet processing.
 
 \subsection{AF\_XDP netdev configuration}
-When users attach a AF\_XDP netdev to the OVS bridge, for example, by
-issuing the following command:
-{
+When users attach a AF\_XDP netdev to an OVS bridge, for example, by
+issuing the following commands:
+{\small
 \begin{verbatim}
     ovs-vsctl add-br br0
     ovs-vsctl add-port br0 eth0 -- \
         set int eth0 type="afxdp"
 \end{verbatim}
 }
-ovs-vswitch does the following steps to configure the
+ovs-vswitch does the following steps to bring up the
 AF\_XDP netdev:
 \begin{enumerate}
 \item Attach a XDP program to the netdev's queue:
@@ -712,19 +717,16 @@ key equals zero and the file descriptor, fd, of the XSK as its value.
 As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
 forwards the packet to the XSK.
 
-\item Fill the UMEM FILL ring: Get a couple UMEM elements and place into FILL ring.
+\item Populate the UMEM FILL ring: Get a couple UMEM elements and place into FILL ring.
 \end{enumerate}
 On the other hand, when a AF\_XDP netdev is detached or closed by user,
 ovs-vswitchd closes the XSK socket, free the UMEM memory region, and
 unload the eBPF program and map.
 
-% 1 UMEM per XSK per queue, no sharing
-%For each netdev, ovs-vswitchd attach XSK to each 
-%For each XSK
-\subsection{Packet Reception}
 In order to properly set-up the RX/TX/FILL/COMPLETION rings, we implement a
 UMEM memory management API. Basically, it's a list maintaining the unused elements
-in UMEM, called UMEM freelist, and APIs to get/put elements into the list.
+in UMEM, called UMEM freelist, and function calls to get/put elements into the list.
+\subsection{Packet Reception}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
@@ -858,20 +860,22 @@ All of our performance results use a hardware test bed that consists of
 two Intel Xeon E5 2440 v2 1.9GHz servers, each with 1 CPU socket and
 8 physical cores with hyperthreading enabled.
 One server, the target server, has an Intel 40GbE XL710 single port NIC,
-the other server, the source server, has Netronome NFP-4000 40GbE device.
+and the other server, the source server, has Netronome NFP-4000 40GbE device.
 The target server runs the Linux kernel 4.19-rc4, with i40e driver supporting
 the AF\_XDP mode.
 We installed OVS-AFXDP on the target server, and the other server,
 the source server, generates 64-byte single UDP flow packets
 at the rate of 19~Mpps using the DPDK library.
+On the target server, we also disable the spectre and meltdown fixes.
 
 For all our experiments, we fuse a microbenchmark program, called xdpsock,
 as the baseline to compare with OVS-AFXDP implementation.
 xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
-to do simply dropping the packet, rxdrop, or forwarding the packet to the same port as
+to do simply dropping all packets, rxdrop, or forwarding the packet to the same port as
 it receives, l2fwd.
 In our testbed, we measured $19Mpps$ for xdpsock-rxdrop and $17Mpps$ for xdpsock-l2fwd.
-For OVS-AFXDP, we conduct similar two experiments, but with OVS's OpenFlow rule below:
+For OVS-AFXDP, we conduct similar two experiments, but with OVS's OpenFlow rule installed as
+below:
 \begin{itemize}
 \item OVS-AFXDP rxdrop: Install a single OpenFlow rule to drop every packets,
 e.g.,  \texttt{in\_port=eth1, actions=drop}.
@@ -880,64 +884,63 @@ as it receives, e.g., \texttt{in\_port=eth1, actions=set\_fields:eth2->in\_port,
 \end{itemize}
 
 Additionally, AF\_XDP provides three operation modes:
-1) XDP\_SKB: works on devices using generic XDP~\cite{genericxdp},
-2) XDP\_DRV: works on devices with XDP support.
-3) XDP\_DRV ZC (Zero Copy): works on devices with XDP\_XDP zerecopy support.
+XDP\_SKB: works on devices using generic XDP~\cite{genericxdp},
+XDP\_DRV: works on devices with XDP support, and
+XDP\_DRV ZC (Zero Copy): works on devices with XDP\_XDP zerecopy support.
 For all our experiments, we use the XDP\_DRV ZC mode.
 
-When forwarding packets using AF\_XDP with OVS, two CPUs show up
+\subsubsection{PMD netdev}
+Our initial prototype shows pretty terrible performance, only $0.5Mpps$ for rxdrop.
+We observe that when dropping/forwarding packets under OVS-AFXDP, two CPUs show up
 100\% utilitization:
 \begin{itemize}
 \item ovs-vswitchd: This is the process keeps doing the send and receive steps
-in Figure~\ref{afxdprx,afxdptx}.
-\item ksoftirqd: This is the kernel software interrupt thread handling the
-incoming packets, triggering XDP program to pass to the XSK, and also processing
-transmission.
+in Figure~\ref{afxdprx} and~\ref{afxdptx}.
+\item ksoftirqd/core\_id: This is the kernel software interrupt thread handling the
+incoming packets, triggering XDP program to pass packets to the XSK, and also
+processing transmission.
 \end{itemize}
-
-Compared to xdpsock, ovs-vswitchd adds on top of it a UMEM memory pool,
-and packets parsing, lookup and action execution.
-Our initial prototype shows pretty terrible performance, only $0.5Mpps$ rxdrop.
-We investigated and our first fix is to enable OVS's PMD-mode,
+\mycomment{Compared to xdpsock, ovs-vswitchd adds on top of it a UMEM memory pool,
+and packets parsing, lookup and action execution.}
+We investigate using Linux perf and our first fix is to enable OVS's PMD-mode,
 Poll-Mode-Driver, to the afxdp netdev.
 
-\subsubsection{PMD netdev}
 In OVS, a non-pmd mode netdev does packet receiption by putting all the receiving
-netdev's file descript together and ovs-vswitch polls them when there is an fd ready
-to perform I/O.  As a result, the fd of the XSK is {\em shared} with other fds, and
+netdev's file descriptors, fds, together and ovs-vswitchd polls them when there is an fd
+ready to perform I/O.  As a result, the fd of the XSK is {\em shared} with other fds, and
 we observed that the poll system call has pretty high overhead.
 
 Applying OVS's PMD netdev avoids these problems and improving the rxdrop performance
-from $0.5Mpss$ to $3Mpps$.  Ideally, receing packets from XSK does not need to context
+from $0.5Mpss$ to $3Mpps$.  Ideally, receing packets from XSK should not need to context
 switch to into kernel as mentioned in steps~\ref{afxdprx}. So an ideal implementation
-should show minimal context switches with most of the CPU stays in userspace. 
+should show minimal context switches with most of the CPU time stays in userspace. 
 When enabling PMD netdev for afxdp, ovs-vswitch can be
-configured to create a {\em dedicated} thread for the packet I/O.  
-In our case, we create a thread for each XSK receive queue which keeps polling
+configured to create a {\em dedicated} thread for the packet processing.
+In OVS-AFXDP, we create a thread for each XSK's receive queue and the thread keeps polling
 the RX ring for new packets.  Each round of receive polling processes a batch of
-packet, up to maximum of 32 packets. In addition, we enable high memory page 1GB to
-reduce the page fault overhead.  With the above fixes/optimizations, the rxdrop
+packet, up to maximum of 32 packets. In addition, we enable 1GB huge memory page support
+to reduce the page fault overhead.  With the above fixes/optimizations, the rxdrop
 performance increases to around $10Mpps$
 
-\subsubsection{Memory Management and Locks}
+\subsubsection{Memory Management and Locks}\label{memorym}
 For every stage of the optimization, we use Linux perf extensively, e.g., perf stat
 and perf record/report.  With the above new design, we observe the new bottleneck
-is at the UMEM memory pool we introduce to maintain the UMEM freelist, and the
+is at the UMEM memory pool APIs we introduce to maintain the UMEM freelist, as well as the
 packet metadata allocation, struct dp\_packet, for every receiving packet.
 We introduce two major API, umem\_elem\_get(), which gets N free element from the
 UMEM freelist, and umem\_elem\_put(), which places back the free UMEM buffer to
-the freelist.
-producer, consumer
-We implemented three data structures of UMEM memory pool as below
-to compare their performance
+the freelist, similar to the concept of producer (put) and consumer (get).
+We implemented three different data structures of UMEM memory pool as below
+to compare their performance.
 \begin{itemize}
-\item list\_head: Similar to Linux kernel's list\_head, each element contains it
-UMEM addr, and a next pointer points to next free element. Elements are sparse in
-memory. Consumer always takes the first element, head, and producer also place back
+\item list\_head: Similar to Linux kernel's list\_head, each element contains its
+UMEM element address, and a next pointer points to next free element.
+Due to the nature of list\_head, elements are sparse in memory.
+Consumer always takes the first element, head, and producer also place back
 from the head of the list.
 \item ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
-allocated in continuous memory region, and pointers (head and tail) point for
-Consumer takes elements from the tail and when placing back, producer, puts
+allocated in continuous memory region.
+Consumer takes elements from the tail pointer and when placing back, producer, puts
 them into where head pointer points to.
 \item ptr\_stack: Similar to ptr\_ring, an array of elements are allocated
 in continuous memory region, but both consumer and producer takes elements
@@ -946,25 +949,24 @@ from beginning of the array.
 
 Although we allocate one UMEM per netdev, there might be multiple queues per
 netdev sharing the same UMEM. As a result, the above three data structures
-all require a mutex lock before accessing UMEM freelist. Linux perf reports
-pthread\_mutex\_lock as one of the top CPU utilization function, and overall
-shows around $2Mpps$ overhead for rxdrop experiments.
+require a mutex lock before accessing UMEM freelist. Linux perf reports
+pthread mutex lock related APIs as one of the top CPU utilization function.
 We change our design by 1) allocating per-queue UMEM region and 2)
 allocating one pmd thread per queue. As a result, no lock is needed because
 the each queue has only one thread and its own set of UMEM elements.
 
-\subsubsection{Metadat Allocation}
-With the above change, Linux perf shows that the packets metadata allocation
-takes a lot of CPU cycles, the dp\_packet\_init, dp\_packet\_set\_data.
+\subsubsection{Metadata Pre-allocation}
+Moving forward, Linux perf shows that the packets metadata allocation
+takes a lot of CPU cycles, i.e.,  dp\_packet\_init(), dp\_packet\_set\_data().
 So instead of allocating packet metadata at packet reception time, we
-implement two data structures and compare their performance:
+implemented two data structures and compare their performance:
 \begin{itemize}
-\item Embedding in UMEM buffer: Since we already allocate 2K chunk for each
-UMEM buffer, we reserve the first 256-byte in each UMEM element as struct dp\_packet
+\item Embedding in packet buffer: Since we already allocate 2K chunk for each
+UMEM packet buffer, we reserve the first 256-byte in each UMEM element as struct dp\_packet
 and initialize the dp\_packet as much as we can at allocation time.
 This is similar to the DPDK mbuf design~\cite{dpdkmbuf}, where a single memory buffer
 is used for both packet data and metadata.
-\item Array on heap: This design simply allocate a continuous memory region
+\item Separate from packet buffer: This design simply allocate a continuous memory region
 storing an array of packet metadata, and initialize them as much as we can.
 \end{itemize}
 
@@ -972,25 +974,24 @@ storing an array of packet metadata, and initialize them as much as we can.
 % see mbuf dpdk https://doc.dpdk.org/guides/prog_guide/mbuf_lib.html
 %Embed metadata within a single memory buffer the structure followed by a fixed size area for
 % the packet data.
-%Use separate memory buffers for the metadata structure and for the packet data.
 
-With the above design change, we found that using the ptr\_stack with
-array on heap get the best performance. Largely due to both data structures
-have better spatial locality and more batching friendly.
+With the above design change, we found that using the ptr\_stack in section~\ref{memorym} with
+separate from packet buffer design yields the best performance. Largely due to both data structures
+have better spatial locality and more batching friendly, when all data are allocated together.
 For example, setting up 32 packet metadatas in an array definitely incurs
 less cache misses than setting up in 32 elements in UMEM.
 And getting 32 free UMEM elements from ptr\_stack has similar benefits.
-With the above decision, the OVS rxdrop shows $17Mpps$, only $2Mpps$ less
-than the baseline xdpsock rxdrop.
+With the above decision, the OVS rxdrop shows around $19Mpps$, closed
+to the baseline xdpsock rxdrop performance.
 
 \subsubsection{Batching Send Syscall}
 %574.790 M/sec  
-We continued measured the performance of OVS-AFXDP l2fwd and.
-observed only $4Mpps$, compared to $17Mpps$ baseline xdpsock.
-Again, by analysis using perf, we found that the OVS pmd thread under rxdrop
+We continued measuring the performance of OVS-AFXDP l2fwd and
+observed only $4Mpps$, compared to $17Mpps$ baseline xdpsock-l2fwd.
+We found that the OVS pmd thread under rxdrop
 has much fewer context switches compared to the l2fwd, indicating that
-the PMD process spends much more time in kernel space than in userspace.
-By using strace, we saw that the l2fwd experiement calls sendto system call
+the pmd process spends much more time in kernel space than in userspace.
+By using strace, we saw that the OVS-AFXDP l2fwd experiement calls sendto system call
 at very high frequeuce, because from Figure~\ref{afxdptx}, we design to check
 the success of send (step 4) immediately after issusing send (step 3).
 We change the design by calling send syscall (step 3) only when TX ring is
@@ -999,10 +1000,26 @@ In specific case, instead of issuing send syscall for a batch of 32 packets
 and making sure they are done, we only issue send when there are 512 outstanding
 packets.  With this change, the OVS-AFXDP l2fwd experiment shows around $14Mpps$.
 
+\subsubsection{Summary}
+In summary, with the above design and optimization, OVS-AFXDP shows
+\begin{table}
+\centering
+\small
+\begin{tabular}{|c | c | c|}
+\hline
+ {\bf Projects} & {\bf xdpsock } & {\bf OVS-AFXDP} \\ \hline\hline
+  rxdrop & 19Mpps & 19Mpps \\ \hline
+  l2fwd  & 17Mpps & 14Mpps \\ \hline
+  \end{tabular}
+\caption{\footnotesize
+Performance comparison of the xdpsock and and OVS-AFXDP.
+}
+\label{compare}
+\end{table}
+Although there are still rooms for improvement, we are now working on
+making the patch upstream to the OVS code base for more people to use.
 
-%rxhash
-
-
+\section{Conclusion}
 \bibliography{paper.bib}
 \bibliographystyle{plain}
 
