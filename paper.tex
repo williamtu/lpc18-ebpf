@@ -66,73 +66,65 @@ In this paper we describe our efforts to make use of eBPF technology in OVS.
 We present the design, implementation, and evaluation of two projects:
 the OVS-eBPF project and the OVS-AFXDP project.
 OVS-eBPF has the goal of re-writing existing flow processing features
-in openvswitch kernel module into eBPF code.
+in openvswitch kernel module into eBPF code, by attaching eBPF program
+to Linux TC.
 On the other hand, the OVS-AFXDP project aims to by-passing the kernel
-using AF\_XDP socket and moving most of the flow processing features
-in userspace.
+using AF\_XDP socket and moves most of the flow processing features
+into userspace.
 
 \end{abstract}
 
 \section{Introduction}\label{introduction}
 
-
 eBPF, extended Berkeley Packet Filter, enables userspace applications to
 customize and extend the Linux kernel's functionality.  It provides
 flexible platform abstractions for network functions, and is being ported
-to a variety of platforms. 
-The Linux kernel BPF~\cite{cbpf,bpfp},
-with its extension called eBPF~\cite{lwnebpf,daniel1,daniel2},
-provides the desired infrastructure for an OVS datapath implementation.
-Specifically, a packet flowing inside a Linux
-box can be intercepted and trigger the execution of arbitrary eBPF programs.
+to a variety of platforms.  Among the various different ways of using eBPF,
+OVS has been exploring the power of eBPF in three:
+1) in-kernel flow processing by attaching eBPF programs to TC,
+2) offloading a subset of processing to XDP (eXpress Data Path),
+and 3) moving the flow processing to userspace by using AF\_XDP.
 
-Among the various ways of using eBPF, OVS has been exploring the power of eBPF in three:
-(1) attaching eBPF to TC, (2) offloading a subset of processing to XDP, and (3) by-passing
-the kernel using AF\_XDP.
-Attaching eBPF to TC started first with the most aggressive goal: we planned to re-implement
-the entire features of OVS kernel datapath under net/openvswitch/* into eBPF code.
-We worked around a couple of limitations, for example, the lack of TLV support led us to
-redefine a binary kernel-user API using a fixed-length array; and without a dedicated way to
-execute a packet, we created a dedicated device for user to kernel packet transmission,
+Attaching eBPF to TC, OVS-eBPF project, started first with the most aggressive goal:
+we planned to re-implement the entire features of OVS kernel datapath under net/openvswitch/* into eBPF code.
+We worked around a couple of limitations, for example, the lack of TLV (Type-Length-Value) support
+led us to redefine a binary kernel-user API using a fixed-length array;
+and without a dedicated way to execute a packet, we created a dedicated
+device for user to kernel packet transmission,
 with a different BPF program attached to handle packet execute logic.
-Currently, we are working on connection tracking.
-Although a simple eBPF map can achieve basic operations of conntrack table lookup and commit,
-how to handle NAT, (de)fragmentation, and ALG are still under discussion.
+Currently, OVS-eBPF can satisfy most of the basic feature requirement
+for flow processing, including tunneling protocol support.
+But more complicated processing such as connection tracking, NAT,
+(de)fragmentation, and ALG are still under discussion.
 
 Moving one layer below TC is called XDP (eXpress Data Path), a much faster layer for packet
 processing, but with almost no extra packet metadata and limited BPF helpers support.
 Depending on the complexity of flows, OVS can offload a subset of its flow processing to XDP
 when feasible. However, the fact that XDP has fewer helper function support implies that either
 1) only very limited number of flows are eligible for offload, or 2) more flow processing logic
-needed to be done in native eBPF.
+needed to be done in native eBPF code.
  
-AF\_XDP is another form of XDP but providing a socket interface for control plane and a shared
-memory API for accessing packets from userspace application. OVS today has another full-fledged
-datapath implementation in userspace, called dpif-netdev, used by DPDK community.
-By treating the AF\_XDP as a fast packet-I/O channel, the OVS dpif-netdev can satisfy most of the
-features. We are working on building the prototype and evaluating its performance.
+XDP provides another way for interacting with userspace programs, called AF\_XDP. 
+AF\_XDP is another socket interface for control plane and a shared
+memory API for accessing packets from userspace application.
+OVS today has another full-fledged
+datapath implementation in userspace, called dpif-netdev, mostly used by DPDK community.
+OVS-AFXDP project treats the AF\_XDP as a fast packet-I/O channel, and move
+most of the flow processing into the userspace OVS.
 
 
-Existing OVS consists of three datapath implementations:
-dpif-netlink
-dpif-netdev
-dpif-windows
-In this paper, OVS-eBPF project adds a new datapath type
-dpif-bpf
-and OVS-AFXDP project reuses the dpif-netdev interface, with
-linux netdev receiving/sending packets from AFXDP sockets.  
-
-Table~\ref{compare} shows the difference between two projects:
+A rough comparison of the two project is shown in Table~\ref{compare}
+This paper describes the design, implementation, and evaluation of the
+OVS-eBPF and OVS-AFXDP projects.
 \begin{table}
 \centering
 \scriptsize
 \begin{tabular}{|c | c | c|}
 \hline
  {\bf Projects} & {\bf OVS-eBPF } & {\bf OVS-AFXDP} \\ \hline\hline
-%  Performance & $<$2Mpps & $>14$Mpps \\ \hline
-  Performance & Low & High \\ \hline
+  Packet Rate & Low & High \\ \hline
   Driver Support & No & Yes \\ \hline
-  Minimal Kernel & 4.18 & Unknown \\ \hline
+  Minimal Kernel Req. & 4.18 & Unknown \\ \hline
   BPF Code Size & Large & Minimal \\ \hline
   Extensibility & Low & High \\ \hline
   \end{tabular}
@@ -143,30 +135,6 @@ Comparison of the OVS-eBPF project and OVS-AFXDP project.
 \end{table}
 
 \section{Background}
-
-\subsection{OVS Forwarding Model}
-
-\begin{figure}
-{\scriptsize
-\begin{verbatim}
-              
-                +-------------------+
- slow path      |    ovs-vswitchd   |
-                +-----^-------------+
-                      |       |flow installation
-----------------------|-------|-----------------
- fast path     upcall |       | 
- (datapath)  +----------------v---------+ 
-  packets--> | parse, lookup, actions   |  --> output
-             +--------------------------+
-\end{verbatim}
-}
-\vspace{-1.0em}
-\caption{An example of mirrored packet with outer header containing
-the GRE and ERSPAN header, followed by the innter Ethernet frame.}
-\label{erspanhdr}
-\vspace{-1.0em}
-\end{figure}
 
 OVS is widely used in virtualized data center environments as a software
 switching layer inside various operating systems, including FreeBSD,
@@ -199,18 +167,30 @@ connections.  In recent versions of OVS, datapath implementations include
 features such as connection tracking, stateful network address translation, and
 support for layer 3 tunneling protocols.
 
-\mycomment{
-As each new feature in OVS datapath requires deep knowledge and programming
-paradigm of the target operating system, e.g., how Linux packets are received,
-how Windows kernel module does firewalling, and each operating system
-community has its own software upstream and maintenance processes, the software
-development cycle of a new datapath feature becomes complex and requires
-detailed platform-specific knowledge. Each platform introduces its own
-development and maintenance burden, and it is common for new features to take
-six months or more before implementations are available across all datapaths.
-As a result, providing a programmable OVS datapath which allows extending the
-features flexibly with lower maintenance cost becomes a critical requirement.
+\subsection{OVS Forwarding Model}
+
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+              
+                +-------------------+
+ slow path      |    ovs-vswitchd   |
+                +-----^-------------+
+                      |       |flow installation
+----------------------|-------|-----------------
+ fast path     upcall |       | 
+ (datapath)  +----------------v---------+ 
+  packets--> | parse, lookup, actions   |  --> output
+             +--------------------------+
+\end{verbatim}
 }
+\vspace{-1.0em}
+\caption{An example of mirrored packet with outer header containing
+the GRE and ERSPAN header, followed by the innter Ethernet frame.}
+\label{erspanhdr}
+\vspace{-1.0em}
+\end{figure}
+
 
 \subsection{eBPF Basics}\label{sec:ebpf}
 Berkeley Packet Filter, BPF, is an instruction set architecture
@@ -947,8 +927,7 @@ packet metadata allocation, struct dp\_packet, for every receiving packet.
 We introduce two major API, umem\_elem\_get(), which gets N free element from the
 UMEM freelist, and umem\_elem\_put(), which places back the free UMEM buffer to
 the freelist.
-producer 
-consumer
+producer, consumer
 We implemented three data structures of UMEM memory pool as below
 to compare their performance
 \begin{itemize}
@@ -974,24 +953,25 @@ We change our design by 1) allocating per-queue UMEM region and 2)
 allocating one pmd thread per queue. As a result, no lock is needed because
 the each queue has only one thread and its own set of UMEM elements.
 
-%\subsubsection{Metadat Allocation}
+\subsubsection{Metadat Allocation}
 With the above change, Linux perf shows that the packets metadata allocation
 takes a lot of CPU cycles, the dp\_packet\_init, dp\_packet\_set\_data.
 So instead of allocating packet metadata at packet reception time, we
 implement two data structures and compare their performance:
 \begin{itemize}
-\item Inlining in UMEM buffer: Since we already allocate 2K chunk for each
+\item Embedding in UMEM buffer: Since we already allocate 2K chunk for each
 UMEM buffer, we reserve the first 256-byte in each UMEM element as struct dp\_packet
 and initialize the dp\_packet as much as we can at allocation time.
-So when packets arrive, each packet already has its packet metadata at a const
-offset ahead.
+This is similar to the DPDK mbuf design~\cite{dpdkmbuf}, where a single memory buffer
+is used for both packet data and metadata.
 \item Array on heap: This design simply allocate a continuous memory region
 storing an array of packet metadata, and initialize them as much as we can.
 \end{itemize}
 
 %complete separation of the allocation of metadata structures from the allocation of packet data buffers.
 % see mbuf dpdk https://doc.dpdk.org/guides/prog_guide/mbuf_lib.html
-%Embed metadata within a single memory buffer the structure followed by a fixed size area for the packet data.
+%Embed metadata within a single memory buffer the structure followed by a fixed size area for
+% the packet data.
 %Use separate memory buffers for the metadata structure and for the packet data.
 
 With the above design change, we found that using the ptr\_stack with
