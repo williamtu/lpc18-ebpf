@@ -48,7 +48,7 @@
   \begin{matrix}
     % Alphabetical order.
     \textrm{William Tu} & \textrm{Joe Stringer} & \textrm{Yifeng Sun} & \textrm{Yi-Hung Wei}\\
-    \textrm{u9012063@gmail.com} & \textrm{stringerjoe@vmware.com} & \textrm{pkusunyifeng@gmail.com} & \textrm{yihung.wei@gmail.com} \\
+    \textrm{u9012063@gmail.com} & \textrm{joe@ovn.org} & \textrm{pkusunyifeng@gmail.com} & \textrm{yihung.wei@gmail.com} \\
   \end{matrix}
   \)
 }
@@ -778,28 +778,28 @@ processing incoming AF\_XDP packets.}
 Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the FILL ring and
 the RX ring for receving packets from XSK.  For simplicity to demonstrate
 how AF\_XDP works, assume that there are only eight UMEM buffers, with each buffer's
-size equals 2KB.  Initially at step 1, ovs-vswitchd fills four empty UMEM elem into
+size equals 2KB.  Initially at step 1, ovs-vswitchd fills four available UMEM elements into
 the FILL ring and waits for incoming packets.  When there are incoming packets,
 at step 2, the FILL ring's four buffer elems have been consumed and moved
 to the RX ring.  In order to keep receiving packets, ovs-vswitchd gets another
-four empty UMEM elems from thte UMEM freelist, and fills into FILL ring (step 3).
+four available UMEM elements from the UMEM freelist, and fills into FILL ring (step 3).
 Then ovs-vswitchd creates the metadata needed for the four packet
-buffer, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
+buffer \{1, 2, 3, 4\}, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
 the dpif-netdev layer for parse, lookup and action executions.
 Finally, when ovs-vswitchd finishes processing the UMEM buffer, a recycle
 mechanism is triggered to place these buffer back to UMEM freelist (step 5).
-Step 5 makes sure that there are always available elems in FILL ring, so
-that the underlying XDP program in kernel can keep placing packets into
-the FILL ring while the userspace ovs-vswitchd is processing the previous
-received packets.
-When step 5 finishes, ovs-vswitchd goes back to step 2, waiting and processing
+Step 5 makes sure that there are always available elements in FILL ring, so
+that the underlying XDP program in kernel can keep processing packets 
+while the userspace ovs-vswitchd is processing the previous
+received packets on RX ring.
+When step 5 finishes, ovs-vswitchd goes back to step 2, waiting for
 new packets.
 
 \subsection{Packet Transmission}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
- dpif-netdev has 4 packets at UMEM:{1, 2, 3, 4}
+ OVS dpif-netdev has 4 packets at UMEM:{1, 2, 3, 4} received
  from eth1 and plan to send to eth2.
 (1) Get 4 free elements from eth2's UMEM, copy packet data to it
 (2) Create TX descriptors and place into TX ring
@@ -841,10 +841,10 @@ And there is a flow entry showing
 packets received from eth1 to eth2.
 And both eth1 and eth2 are configured with AF\_XDP support.
 
-Initially, assume ovs-vswitchd receives four packets {1, 2, 3, 4} from eth1's XSK
-To send to eth2 using its XSK, ovs-vswitchd first gets four packet buffers,
-{4, 5, 6, 7}, from eth2's UMEM freelist and copy the packet data to their
-packet buffer in UMEM.  Then TX descriptors for the four packets are
+Initially, assume ovs-vswitchd receives four packets \{1, 2, 3, 4\} from eth1's XSK
+To send to eth2 using eth2's XSK, ovs-vswitchd first gets four packet buffers,
+\{4, 5, 6, 7\} from eth2's UMEM freelist and copy the packet data from eth1's UMEM
+to eth2's \{4, 5, 6, 7\}.  Then TX descriptors for the four packets are
 created and placed into eth2's TX ring (step 2).
 At step 3, send syscall is issued to signal the kernel to start transmit.
 As the send in XSK is asynchronos and send syscall only return return zero when
@@ -852,8 +852,8 @@ no error, ovs-vswitch polls the COMPLETION ring to make sure these four
 packets have been sent out (step 4).
 Once the four packets' descriptors shown up at the COMPLETION ring, at step 5,
 ovs-vswitchd recycles their UMEM elememnts back to the eth2's UMEM freelist.
-In addition, the original four packet buffer from eth1, {1, 2, 3, 4}, is
-also srecycled back to eth1's UMEM freelist.
+In addition, the original four packet buffer from eth1, \{1, 2, 3, 4\}, is
+also recycled back to eth1's UMEM freelist.
 
 \subsection{Performance Evaluation}
 All of our performance results use a hardware test bed that consists of
@@ -866,7 +866,7 @@ the AF\_XDP mode.
 We installed OVS-AFXDP on the target server, and the other server,
 the source server, generates 64-byte single UDP flow packets
 at the rate of 19~Mpps using the DPDK library.
-On the target server, we also disable the spectre and meltdown fixes.
+On the target server, we also disable the Intel spectre and meltdown fixes.
 
 For all our experiments, we fuse a microbenchmark program, called xdpsock,
 as the baseline to compare with OVS-AFXDP implementation.
@@ -1001,7 +1001,12 @@ and making sure they are done, we only issue send when there are 512 outstanding
 packets.  With this change, the OVS-AFXDP l2fwd experiment shows around $14Mpps$.
 
 \subsubsection{Summary}
-In summary, with the above design and optimization, OVS-AFXDP shows
+Through the step-by-step analysis, the key to performance is to keep
+the process CPU time in userspace, and making sure the userspace process
+is dedicated to do packet processing. Moreover, standard optmization
+techniques such as batching is critical. Here we apply batching in a
+couple of places such as issuing send syscall, packet reception and
+transmission. In summary, OVS-AFXDP shows performance below:
 \begin{table}
 \centering
 \small
@@ -1016,10 +1021,13 @@ Performance comparison of the xdpsock and and OVS-AFXDP.
 }
 \label{compare}
 \end{table}
+
 Although there are still rooms for improvement, we are now working on
 making the patch upstream to the OVS code base for more people to use.
 
 \section{Conclusion}
+This paper describes two eBPF projects related to OVS: OVS-eBPF and OVS-AFXDP.
+
 \bibliography{paper.bib}
 \bibliographystyle{plain}
 

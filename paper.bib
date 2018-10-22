@@ -1,10 +1,16 @@
-@misc{erspan_ietf,
-  author = 	 {M. Foschiano},
-  title = 	 {{Cisco Systems' Encapsulated Remote Switch Port Analyzer (ERSPAN)}},
-  howpublished = {\url{https://tools.ietf.org/html/draft-foschiano-erspan-00}},
-  month = 	 {October},
-  year = 	 2014
-}
+@Misc{dpdkmbuf,
+  author = 	 {DPDK Guide},
+  title = 	 {{Mbuf Library}},
+  howpublished = {\url{https://doc.dpdk.org/guides/prog_guide/mbuf_lib.html}},
+  month = 	 {April},
+  year = 	 2017}
+
+@Misc{genericxdp,
+  author = 	 {David Miller},
+  title = 	 {{Generic XDP}},
+  howpublished = {\url{https://lwn.net/Articles/720072/}},
+  month = 	 {April},
+  year = 	 2017}
 @misc{mvp,
   author = 	 {David Miller},
   title = 	 {[{GIT} net-next] {Open vSwitch}},
@@ -241,3 +247,306 @@
   howpublished = {\url{https://www.iovisor.org/technology/use-cases}},
   month = 	 {May},
   year = 	 2017}
+@inproceedings{ovs,
+  title={The design and implementation of open vswitch},
+  author={Pfaff, Ben and Pettit, Justin and Koponen, Teemu and Jackson, Ethan and Zhou, Andy and Rajahalme, Jarno and Gross, Jesse and Wang, Alex and Stringer, Joe and Shelar, Pravin and others},
+  booktitle={12th USENIX symposium on networked systems design and implementation (NSDI 15)},
+  pages={117--130},
+  year={2015}
+}
+
+@article{pisces,
+  title={{PISCES}: A Programmable, Protocol-Independent Software Switch},
+  author={Shahbaz, Muhammad and Choi, Sean and Pfaff, Ben and Kim, Changhoon and Feamster, Nick and McKeown, Nick and Rexford, Jennifer},
+  journal={ACM SIGCOMM},
+  year={2016}
+}
+
+@article{benp4ovs,
+  title={P4 and open vswitch},
+  author={Ben Pfaff},
+  journal={http://p4.org/p4/p4-and-open-vswitch/},
+  year={2015}
+}
+
+@article{p4ovspatch,
+  title={P4 support in {OVS}},
+  author={Shahbaz, Muhammad},
+  journal={https://www.mail-archive.com/dev@openvswitch.org/msg70231.html},
+  year={2016}
+}
+
+@article{daniel1,
+  title={On getting tc classifier fully programmable with cls bpf.},
+  author={Borkmann, Daniel},
+  journal={NetDev 1.1},
+  year={2016}
+}
+
+@article{daniel2,
+  title={Advanced programmability and recent updates with tc's cls\_bpf.},
+  author={Borkmann, Daniel},
+  journal={NetDev 1.2},
+  year={2016}
+}
+
+@article{nicxdp,
+  title={eBPF Hardware Offload to SmartNICs: cls bpf and XDP.},
+  author={Kicinski, Jakub and Viljoen, Nicolaas}
+}
+
+@article{xdp,
+  title={XDP – eXpress Data Path, Intro and future use-cases.},
+  author={Jesper Dangaard Brouer},
+  journal={NetDev 1.2},
+  year={2016}
+}
+
+@article{tcoffload,
+  title={Using SR-IOV offloads with Open-vSwitch and similar applications.},
+  author={Rony E., Or G.},
+  journal={NetDev 1.2},
+  year={2016}
+}
+
+@inproceedings{radio15bpf,
+  title={Accelerating NSX Feature Deployment via Extensibility.},
+  author={Stringer, Joe and Zhou, Andy and Pfaff, Ben and Pettit, Justin},
+  booktitle={VMware RADIO},
+  year={2015}
+}
+
+@article{ovsbpfms,
+  title={{OVS} + {BPF}, make sense?},
+  author={ovs-dev mailing list},
+  journal={https://mail.openvswitch.org/pipermail/ovs-dev/2014-December/293395.html},
+  year={2014}
+}
+
+@article{ovstc,
+  title={Implementing Open vSwitch datapath using TC},
+  author={P{\'\i}rko, Ji{\v{r}}{\'\i} and Hat, Red},
+  journal={Proceedings of Netdev 0.1},
+  year={2015}
+}
+
+@article{tcsubsys,
+  title={Linux Traffic Control Classifier-Action Subsystem Architecture},
+  author={Salim, Jamal Hadi}
+}
+
+@article{inkev,
+  title={InKeV: In-Kernel Distributed Network Virtualization for DCN},
+  author={Ahmed, Zaafar and Alizai, Muhammad Hamad and Syed, Affan A},
+  journal={ACM SIGCOMM CCR},
+  year={2016}
+}
+
+@misc{danial1,
+  title={On getting tc classifier fully programmable with cls bpf.},
+  author={Borkmann, Daniel},
+  publisher={NetDev 1.1}
+}
+
+@inproceedings{ebpfperf,
+  title={bpf: add event output helper for notifications/sampling/logging.},
+  author={Borkmann, D. and Starovoitov, A.},
+  booktitle={Linux kernel, commit bd570ff970a5.},
+  year={2016}
+}
+
+@inproceedings{ebpfperf2,
+  title={bpf: avoid stack copy and use skb ctx for event output.},
+  author={Borkmann, D.},
+  booktitle={Linux kernel, commit 555c8a8623a3.},
+  year={2016}
+}
+
+@inproceedings{dpa1,
+  title={bpf: direct packet access.},
+  author={Starovoitov, A.},
+  booktitle={Linux kernel, commit 969bf05eb3ce.},
+  year={2016}
+}
+
+@inproceedings{dpa2,
+  title={bpf: direct packet write and access for helpers for clsact progs.},
+  author={Borkmann, D.},
+  booktitle={Linux kernel, commit 36bbef52c7eb.},
+  year={2016}
+}
+
+@inproceedings{bpfpmap,
+  title={bpf: add support for persistent maps/progs.},
+  author={Borkmann, D.; Starovoitov, A.; and Sowa, H. F.},
+  booktitle={Linux kernel, commit b2197755b263.},
+  year={2015}
+}
+
+@inproceedings{x86jit,
+  title={net: filter: x86: internal bpf jit.},
+  author={Starovoitov, A.},
+  booktitle={Linux kernel, commit 622582786c9e.},
+  year={2014d}
+}
+
+@inproceedings{tailcall,
+  title={bpf: allow bpf programs to tail-call other bpf programs.},
+  author={Starovoitov, A.},
+  booktitle={Linux kernel, commit 04fd61ab36ec.},
+  year={2015a}
+}
+
+@inproceedings{tracing,
+  title={tracing, perf: Implement bpf programs attached to kprobes.},
+  author={Starovoitov, A.},
+  booktitle={Linux kernel, commit 2541517c32be.},
+  year={2015b}
+}
+
+@article{bcc,
+  title={{BCC} - Tools for BPF-based Linux IO analysis, networking, monitoring, and more},
+  author={BCC Authors},
+  journal={https://github.com/iovisor/bcc},
+  year={2016}
+}
+
+@article{iovisor,
+  title={{IO} {V}isor {P}roject},
+  journal={https://www.iovisor.org/},
+  year={2016}
+}
+
+@article{cilium,
+  title={{BPF} and {XDP} for containers.},
+  author={Cilium Authors.},
+  journal={https://github.com/cilium/cilium},
+  year={2016}
+}
+
+@article{iovisorovs16,
+  title={Coupling the Flexibility of OVN with the Efficiency of IOVisor: Architecture and Demo},
+  author={ Fulvio Risso and Matteo Bertrone, Politecnico di Torino},
+  journal={OVS Fall Conference},
+  year={2016}
+}
+
+@Misc{p4ebpf,
+   author =	{Mihai Budiu},
+   title =	{Compiling {P4} to {eBPF}},
+   month =	{September},
+   year =	{2015},
+   howpublished =	{https://github.com/iovisor/bcc/tree/master/src/cc/frontends/p4}
+}
+
+@article{p4,
+  title={P4: Programming protocol-independent packet processors},
+  author={Bosshart, Pat and Daly, Dan and Gibb, Glen and Izzard, Martin and McKeown, Nick and Rexford, Jennifer and Schlesinger, Cole and Talayco, Dan and Vahdat, Amin and Varghese, George and others},
+  journal={ACM SIGCOMM Computer Communication Review},
+  volume={44},
+  number={3},
+  pages={87--95},
+  year={2014},
+  publisher={ACM}
+}
+
+@inproceedings{hyperP4,
+  title={HyPer4: Using P4 to Virtualize the Programmable Data Plane},
+  author={Hancock, David and van der Merwe, Jacobus},
+  booktitle={Proceedings of the 12th International on Conference on emerging Networking EXperiments and Technologies},
+  pages={35--49},
+  year={2016},
+  organization={ACM}
+}
+
+@article{conntrackpatch,
+  title={{OVS} conntrack support.},
+  author={Joe Stringer},
+  journal={https://lwn.net/Articles/633401/},
+  year={2016}
+}
+
+@inproceedings{conntrackpatch2,
+  title={{OVS} conntrack support.},
+  author={Joe Stringer},
+  booktitle={https://lwn.net/Articles/633401/},
+  year={2016}
+}
+
+@article{lwnebpf,
+  title={Extending extended BPF.},
+  author={Jonathan Corbet},
+  journal={https://lwn.net/Articles/603983/},
+  year={2014}
+}
+
+@inproceedings{specialdp,
+  title={Dataplane Specialization for High-performance OpenFlow Software Switching},
+  author={Moln{\'a}r, L{\'a}szl{\'o} and Pongr{\'a}cz, Gergely and Enyedi, G{\'a}bor and Kis, Zolt{\'a}n Lajos and Csikor, Levente and Juh{\'a}sz, Ferenc and K{\H{o}}r{\"o}si, Attila and R{\'e}tv{\'a}ri, G{\'a}bor},
+  booktitle={Proceedings of the 2016 conference on ACM SIGCOMM 2016 Conference},
+  pages={539--552},
+  year={2016},
+  organization={ACM}
+}
+
+@inproceedings{jitk,
+  title={Jitk: A trustworthy in-kernel interpreter infrastructure},
+  author={Wang, Xi and Lazar, David and Zeldovich, Nickolai and Chlipala, Adam and Tatlock, Zachary},
+  booktitle={11th USENIX Symposium on Operating Systems Design and Implementation (OSDI 14)},
+  pages={33--47},
+  year={2014}
+}
+
+@article{shi2008virtual,
+  title={Virtual machine showdown: Stack versus registers},
+  author={Shi, Yunhe and Casey, Kevin and Ertl, M Anton and Gregg, David},
+  journal={ACM Transactions on Architecture and Code Optimization (TACO)},
+  volume={4},
+  number={4},
+  pages={2},
+  year={2008},
+  publisher={ACM}
+}
+
+@inproceedings{bpfp,
+  title={BPF+: Exploiting global data-flow optimization in a generalized packet filter architecture},
+  author={Begel, Andrew and McCanne, Steven and Graham, Susan L},
+  booktitle={ACM SIGCOMM Computer Communication Review},
+  volume={29},
+  number={4},
+  pages={123--134},
+  year={1999},
+  organization={ACM}
+}
+
+@inproceedings{rcu,
+  title={Read-copy update},
+  author={McKenney, Paul E and Appavoo, Jonathan and Kleen, Andi and Krieger, Orran and Russell, Rusty and Sarma, Dipankar and Soni, Maneesh},
+  booktitle={Ottawa Linux Symposium Conference Proceedings},
+  pages={175},
+  year={2001},
+  organization={Ottawa Linux Symposium}
+}
+
+@inproceedings{int,
+  title={In-band network telemetry via programmable dataplanes},
+  author={Kim, Changhoon and Sivaraman, Anirudh and Katta, Naga and Bas, Antonin and Dixit, Advait and Wobker, Lawrence J},
+  booktitle={ACM SIGCOMM},
+  year={2015}
+}
+
+@InProceedings{hymnal,
+  author = 	 {Justin Pettit and Ben Pfaff and Joe Stringer and Cheng-Chun Tu and Brenden Blanco and Alex Tessmer},
+  title = 	 {Bringing Platform Harmony to {VMware NSX}},
+  booktitle = {ACM SIGOPS Operating Systems Review},
+  year = 	 2017,
+}
+
+@inproceedings{shahbaz2016pisces,
+  title={Pisces: A programmable, protocol-independent software switch},
+  author={Shahbaz, Muhammad and Choi, Sean and Pfaff, Ben and Kim, Changhoon and Feamster, Nick and McKeown, Nick and Rexford, Jennifer},
+  booktitle={Proceedings of the 2016 conference on ACM SIGCOMM 2016 Conference},
+  pages={525--538},
+  year={2016},
+  organization={ACM}
+}
