@@ -57,21 +57,26 @@
 \maketitle
 
 \begin{abstract}
-In this paper we discuss two projects, the OVS-eBPF project, with
-the goal of re-writing existing openvswitch kernel module's feature
-into eBPF code at TC attachment hook.
-And the OVS-AFXDP project, where we 
-
+eBPF is an emerging technology in Linux kernel with the goal of making Linux kernel
+extensible by providing an eBPF virtual machine with safety guarantee.
+Open vSwitch, OVS, is a software switch running majorly in Linux
+operating systems and interacts with Linux kernel module,
+the openvswitch.ko.
+In this paper we describe our efforts to make use of eBPF technology in OVS.
+We present the design, implementation, and evaluation of two projects:
+the OVS-eBPF project and the OVS-AFXDP project.
+OVS-eBPF has the goal of re-writing existing flow processing features
+in openvswitch kernel module into eBPF code.
+On the other hand, the OVS-AFXDP project aims to by-passing the kernel
+using AF\_XDP socket and moving most of the flow processing features
+in userspace.
 
 \end{abstract}
 
 \section{Introduction}\label{introduction}
 Among the various ways of using eBPF, OVS has been exploring the power of eBPF in three:
 (1) attaching eBPF to TC, (2) offloading a subset of processing to XDP, and (3) by-passing
-the kernel using AF\_XDP. Unfortunately, as of today, none of the three approaches satisfies
-the requirements of OVS. In this paper, we share the challenges we faced, experience learned,
-and seek for feedbacks from the community for future direction.
-
+the kernel using AF\_XDP.
 Attaching eBPF to TC started first with the most aggressive goal: we planned to re-implement
 the entire features of OVS kernel datapath under net/openvswitch/* into eBPF code.
 We worked around a couple of limitations, for example, the lack of TLV support led us to
@@ -290,67 +295,50 @@ eBPF programs.
 AF\_XDP is a new Linux address family that aims for high packet I/O
 performance. Traditionally, a userspace program receives packets from
 kernel through the socket API.  By creating a socket with address family
-such as AF\_PACKET, the userspace program can receive/send the raw packets
+such as AF\_PACKET, userspace programs can receive/send the raw packets
 at the device driver layer.  Although the AF\_PACKET family has been using
-in many places such as tcpdump, its performance does not catch up the the
+in many places such as tcpdump, its performance does not catch up with the
 recent high speed network devices, such as 40G/100G NICs.
 Performance evaluation~\cite{danialafpacket,johnafxdp} of AF\_PACKET
 shows less than 2 million packets per second using single core.
 
 AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{afxdp} 
 The core idea behind the AF\_XDP is to leverage the XDP eBPF program's
-early access to the raw packet, and create a high speed channel from the XDP to
+early access to the raw packet, and create a high speed channel from the XDP directly to
 a userspace socket interface. In other word, AF\_XDP socket family connects the
-XDP packet receving/sending path to the user space, bypassing the rest of the
+XDP packet receving/sending path to the userspace, bypassing the rest of the
 Linux networking stacks.
 An AF\_XDP socket, called XSK, is create using the normal socket() system
-call. Unlike AF\_PACKET using the send() and receive() syscalls,
+call. Unlike AF\_PACKET which uses the send() and receive() syscalls with packet buffer as parameter,
 XSK introduces two rings in userspace: the RX ring and the TX ring.
 The userspace program using XSK needs to properly configure and maintain
 the RX and TX ring structure in order to receive and send packets.
-
-For example, to receive packets, a set of RX descriptors pointing to empty
-packet buffer needs to be filled into the RX ring.  When packets arrives,
-the userspace program fetches the packet data from the desciptors, and
-refill the empty buffer to the RX ring structure, in order to receive new
-incoming packets.  For sending packets, a set of descriptors pointing the
-packet buffer with contents is filled to the TX ring (FILL queue).
-Then, the userspace
-program issues send() system call.  It is up to the userspace program to
-make sure whether the packets have been sent or not, by checking the TX
-ring structure.
-
-% concept
-Application still HW agnostic with ZC
-Each application gets its own packet buffer and TX/RX descriptor rings
-Packet buffers can be shared if desired
-  TX/RX descriptor rings always private to process
-% AF\_XDP has 3 mode
-% zero copy, native mode,
-XDP\_SKB:
-– Works on any netdevice using sockets and generic XDP path
-XDP\_DRV:
-– Works on any device with XDP support (all three NDOs)
-XDP\_DRV + ZC:
-– Need buffer allocator support in driver + a new NDO for TX
-All the packet data buffers used in TX/RX ring are allocated from a specific
+In addition, all the packet data buffers used in TX/RX ring are allocated from a specific
 memory area called UMEM which consists of a number of fixed size chunks.
-A descriptor in RX/TX ring points to the element in UMEM by its address.
-The address is simply an offset within the entire UMEM memory region.
 The UMEM also has two rings: the FILL ring and the COMPLETION ring.
-The Fill ring is used by the application to send down addr for the kernel
-to fill in with RX packet data. References to these frames will then
-appear in the RX ring once each packet has been received. The 
-completion ring, on the other hand, contains frame addr that the 
-kernel has transmitted completely and can now be used again by user
-space, for either TX or RX. 
+A descriptor in RX/TX ring or in FILL/COMPLETION ring points to the element
+in UMEM by its address.  The address is not system's virtual or physical address
+but simply an offset within the entire UMEM memory region.
 
-Thus, the frame addrs appearing in the 
-completion ring are addrs that were previously transmitted using the 
-TX ring. In summary, the RX and FILL rings are used for the RX path
-and the TX and COMPLETION rings are used for the TX path.
-
-
+For example, to receive packets, a set of descriptors pointing to empty
+packet buffer needs to be filled into the FILL ring.  When packets arrives,
+the userspace program checks the RX ring, fetches the packet data from the
+desciptors, and refills the empty buffer to the FILL ring structure, in order to receive new
+incoming packets.  For sending packets, a set of descriptors pointing the
+packet buffer with contents filled to the TX ring then issus send() system call.
+It is up to the userspace program to make sure whether the packets have been
+sent or not, by checking the COMPLETION ring structure.
+In summary, users of XSK needs to properly interact with the following four
+rings:
+\begin{itemize}
+\item FILL ring: for users to fill UMEM addresses to kernel for receiving packets.
+\item RX ring: for users to access recevied packets. 
+\item TX ring: for users to place packets needed to be sent.
+\item COMPLETION ring: for users to make sure packets are sent.
+\end{itemize}
+Unlike AF\_PACKET which is bound to entire netdev, the XSK is more fine-grained.
+XSK is bound to a specific queue id on a device, so only the traffic/flow 
+sent to the queue id shows up in the XSK.
 \section{OVS eBPF Datapath}
 \mycomment{
 \begin{figure}
@@ -426,7 +414,7 @@ the GRE and ERSPAN header, followed by the innter Ethernet frame.}
 \vspace{-1.0em}
 \end{figure}
 
-\subsection{Datapath and Netdev}
+\subsection{Datapath and Netdev Interface}
 OVS includes a userspace datapath interface (dpif) implemenation, called dpif-netdev.
 Unlike the dpif-netlink which talks to the Linux Open vSwitch kernel
 module through netlink API, the dpif-netdev works completely in userspace.
@@ -441,19 +429,16 @@ as long as each mechanism implements its own netdev interface.
 Once dpif-netdev receives a packet, it follows the same mechanism doing
 parse, lookup the flow table, and apply actions to the packet.
 
-Figure~\ref{ovsafxdp} shows the architecture of Userspace OVS with AF\_XDP.
-We implement a new netdev type called netdev-afxdp, which receives and transmits
-packets using the XSK.
-In order for XSK to work, we insert a XDP program and a eBPF map with   
-interact with XDP program to forward packets to the AF\_XDP socket.
+Figure~\ref{ovsafxdp} shows the architecture of userspace OVS with AF\_XDP.
+We implement a new netdev type for AF\_XDP, which receives and transmits
+packets using the XSK.  We insert a XDP program and a eBPF map with interact
+with XDP program to forward packets to the AF\_XDP socket.
 Once the AF\_XDP netdev receives a packet, it passes the packet to the
 dpif-netdev for packet processing.
 
 \subsection{AF\_XDP netdev configuration}
-ovs-vswitchd controls and manages the XDP program and maps.
-When users attach a AF\_XDP netdev to the OVS bridge, the netdev-afxdp
-does the following steps:
-We implemnet most of the logic in lib/netdev-linux.c
+When users attach a AF\_XDP netdev to the OVS bridge, for example, by
+issuing the following command:
 {
 \begin{verbatim}
     ovs-vsctl add-br br0
@@ -461,44 +446,40 @@ We implemnet most of the logic in lib/netdev-linux.c
         set int eth0 type="afxdp"
 \end{verbatim}
 }
-
+ovs-vswitch does the following steps to configure the
+AF\_XDP netdev:
 \begin{enumerate}
-\item Attach a XDP program to the netdev queue:
+\item Attach a XDP program to the netdev's queue:
 The XDP program OVS attaches is fixed and consists
 of only a few line of code, which receives the packet and
 calls the \texttt{bpf\_redirect\_map()} helper function with
 the XSK eBPF maps and key equals zero.
 
 \item Create a AF\_XDP socket:
-This requires creating the XSK socket by calling socket() syscall,
-setting up its RX and TX ring buffer, allocating a UMEM region,
-and setting up FILL/COMPLETION ring of the UMEM.
+Call socket() syscall to create a XSK,
+set up its RX and TX ring buffer, allocate a UMEM region,
+and set up FILL/COMPLETION ring of the UMEM.
 
 \item Load and configure the XSK eBPF map:
 The XSK eBPF maps consists of key value pairs, where key is an u32 index and value is
-the netdev's queue ID.  In our case, we simply program one entry to the map with
+the file descript of the XSK.  ovs-vswitchd simply programs one entry to the map with
 key equals zero and the file descriptor, fd, of the XSK as its value.
 As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
 forwards the packet to the XSK.
 
-\item Initialize the FILL queue
-Before any packet arrival, the rest three queues: RX, TX and COMPLETION
-remains the same
+\item Fill the UMEM FILL ring: Get a couple UMEM elements and place into FILL ring.
 \end{enumerate}
-
-When a netdev-afxdp is detached or closed by user,
-ovs-vswitchd closes the XSK socket, free its memory, and unload the eBPF program and map.
-
-memory allocation:
+On the other hand, when a AF\_XDP netdev is detached or closed by user,
+ovs-vswitchd closes the XSK socket, free the UMEM memory region, and
+unload the eBPF program and map.
 
 % 1 UMEM per XSK per queue, no sharing
-For each netdev, ovs-vswitchd attach XSK to each 
-For each XSK
-memorypool
-We implement a UMEM freelist to keep track of the used/unused element
-
-To handle multiple 
-\subsection{Packet Reception and Transmission}
+%For each netdev, ovs-vswitchd attach XSK to each 
+%For each XSK
+\subsection{Packet Reception}
+In order to properly set-up the RX/TX/FILL/COMPLETION rings, we implement a
+UMEM memory management API. Basically, it's a list maintaining the unused elements
+in UMEM, called UMEM freelist, and APIs to get/put elements into the list.
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
@@ -541,37 +522,39 @@ RX ring  ...|   |   |   |   | ...
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{An example of how OVS programs the FILL queue and RX ring when
+\caption{An example of how OVS programs the FILL ring and RX ring when
 processing incoming AF\_XDP packets.}
 \label{afxdprx}
 \vspace{-1.0em}
 \end{figure}
-Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the FILL queue and
+
+Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the FILL ring and
 the RX ring for receving packets from XSK.  For simplicity to demonstrate
 how AF\_XDP works, assume that there are only eight UMEM buffers, with each buffer's
 size equals 2KB.  Initially at step 1, ovs-vswitchd fills four empty UMEM elem into
-the FILL queue and waits for incoming packets.  When there are incoming packets,
-at step 2, the FILL queue's four buffer elems have been consumed and moved
+the FILL ring and waits for incoming packets.  When there are incoming packets,
+at step 2, the FILL ring's four buffer elems have been consumed and moved
 to the RX ring.  In order to keep receiving packets, ovs-vswitchd gets another
-four empty UMEM elems from thte UMEM freelist, and fills into FILL queue (step 3).
+four empty UMEM elems from thte UMEM freelist, and fills into FILL ring (step 3).
 Then ovs-vswitchd creates the metadata needed for the four packet
 buffer, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
 the dpif-netdev layer for parse, lookup and action executions.
 Finally, when ovs-vswitchd finishes processing the UMEM buffer, a recycle
 mechanism is triggered to place these buffer back to UMEM freelist (step 5).
-Step 5 makes sure that there are always available elems in FILL queue, so
+Step 5 makes sure that there are always available elems in FILL ring, so
 that the underlying XDP program in kernel can keep placing packets into
-the FILL queue while the userspace ovs-vswitchd is processing the previous
+the FILL ring while the userspace ovs-vswitchd is processing the previous
 received packets.
 When step 5 finishes, ovs-vswitchd goes back to step 2, waiting and processing
 new packets.
 
+\subsection{Packet Transmission}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
  dpif-netdev has 4 packets at UMEM:{1, 2, 3, 4}
  from eth1 and plan to send to eth2.
-(1) Get 4 free element from eth2 UMEM, copy packet data to it
+(1) Get 4 free elements from eth2's UMEM, copy packet data to it
 (2) Create TX descriptors and place into TX ring
            -------------------        eth2 UMEM freelist
 TX ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
@@ -598,7 +581,7 @@ COMPL q  ...|   |   |   |   | ...
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{An example of how OVS programs the COMPLETION queue and TX ring when
+\caption{An example of how OVS programs the COMPLETION ring and TX ring when
 processing incoming AF\_XDP packets from one netdev and sending to another netdev.}
 \label{afxdptx}
 \vspace{-1.0em}
@@ -609,7 +592,7 @@ Assuming that ovs-vswitch has a a bridge and two ports: eth1 and eth2.
 And there is a flow entry showing
 \texttt{in\_port=eth1, ..., actions=..., output:eth2}, meaning to forwarding
 packets received from eth1 to eth2.
-Assuming that both eth1 and eth2 are configured with AF\_XDP support.
+And both eth1 and eth2 are configured with AF\_XDP support.
 
 Initially, assume ovs-vswitchd receives four packets {1, 2, 3, 4} from eth1's XSK
 To send to eth2 using its XSK, ovs-vswitchd first gets four packet buffers,
@@ -618,20 +601,44 @@ packet buffer in UMEM.  Then TX descriptors for the four packets are
 created and placed into eth2's TX ring (step 2).
 At step 3, send syscall is issued to signal the kernel to start transmit.
 As the send in XSK is asynchronos and send syscall only return return zero when
-no error, ovs-vswitch has to poll the COMPLETION queue to make sure these four
+no error, ovs-vswitch polls the COMPLETION ring to make sure these four
 packets have been sent out (step 4).
 Once the four packets' descriptors shown up at the COMPLETION ring, at step 5,
 ovs-vswitchd recycles their UMEM elememnts back to the eth2's UMEM freelist.
 In addition, the original four packet buffer from eth1, {1, 2, 3, 4}, is
-recycled back to eth1's UMEM freelist.
+also srecycled back to eth1's UMEM freelist.
 
-
-Define:
-baseline rxdrop vs OVS-AFXDP rxdrop
-baseline l2fwd vs OVS-AFXDO l2fwd
 \subsection{Performance Evaluation}
+All of our performance results use a hardware test bed that consists of
+two Intel Xeon E5 2440 v2 1.9GHz servers, each with 1 CPU socket and
+8 physical cores with hyperthreading enabled.
+One server, the target server, has an Intel 40GbE XL710 single port NIC,
+the other server, the source server, has Netronome NFP-4000 40GbE device.
+The target server runs the Linux kernel 4.19-rc4, with i40e driver supporting
+the AF\_XDP mode.
+We installed OVS-AFXDP on the target server, and the other server,
+the source server, generates 64-byte single UDP flow packets
+at the rate of 19~Mpps using the DPDK library.
 
-\subsubsection{Testbed}
+For all our experiments, we fuse a microbenchmark program, called xdpsock,
+as the baseline to compare with OVS-AFXDP implementation.
+xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
+to do simply dropping the packet, rxdrop, or forwarding the packet to the same port as
+it receives, l2fwd.
+In our testbed, we measured $19Mpps$ for xdpsock-rxdrop and $17Mpps$ for xdpsock-l2fwd.
+For OVS-AFXDP, we conduct similar two experiments, but with OVS's OpenFlow rule below:
+\begin{itemize}
+\item OVS-AFXDP rxdrop: Install a single OpenFlow rule to drop every packets,
+e.g.,  \texttt{in\_port=eth1, actions=drop}.
+\item OVS-AFXDP l2fwd: Install a single OpenFlow rule to forward packet to the same port
+as it receives, e.g., \texttt{in\_port=eth1, actions=set\_fields:eth2->in\_port, output:eth1}.
+\end{itemize}
+
+Additionally, AF\_XDP provides three operation modes:
+1) XDP\_SKB: works on devices using generic XDP~\cite{genericxdp},
+2) XDP\_DRV: works on devices with XDP support.
+3) XDP\_DRV ZC (Zero Copy): works on devices with XDP\_XDP zerecopy support.
+For all our experiments, we use the XDP\_DRV ZC mode.
 
 When forwarding packets using AF\_XDP with OVS, two CPUs show up
 100\% utilitization:
@@ -642,13 +649,6 @@ in Figure~\ref{afxdprx,afxdptx}.
 incoming packets, triggering XDP program to pass to the XSK, and also processing
 transmission.
 \end{itemize}
-
-For all our experiments, we use a microbenchmark program, called xdpsock,
-as the baseline to compare with our implementation.
-xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
-to do simply dropping the packet, rxdrop, or forwarding the packet to the same port as
-it receives, l2fwd.  In our testbed, we measured $19Mpps$ for rxdrop and $17Mpps$ for
-l2fwd.
 
 Compared to xdpsock, ovs-vswitchd adds on top of it a UMEM memory pool,
 and packets parsing, lookup and action execution.
