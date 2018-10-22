@@ -105,6 +105,26 @@ dpif-bpf
 and OVS-AFXDP project reuses the dpif-netdev interface, with
 linux netdev receiving/sending packets from AFXDP sockets.  
 
+Table~\ref{compare} shows the difference between two projects:
+\begin{table}
+\centering
+\scriptsize
+\begin{tabular}{|c | c | c|}
+\hline
+ {\bf Projects} & {\bf OVS-eBPF } & {\bf OVS-AFXDP} \\ \hline\hline
+%  Performance & $<$2Mpps & $>14$Mpps \\ \hline
+  Performance & Low & High \\ \hline
+  Driver Support & No & Yes \\ \hline
+  Minimal Kernel & 4.18 & Unknown \\ \hline
+  BPF Code Size & Large & Minimal \\ \hline
+  Extensibility & Low & High \\ \hline
+  \end{tabular}
+\caption{\footnotesize
+Comparison of the OVS-eBPF project and OVS-AFXDP project.
+}
+\label{compare}
+\end{table}
+
 \section{Background}
 
 \subsection{OVS Forwarding Model}
@@ -605,8 +625,13 @@ ovs-vswitchd recycles their UMEM elememnts back to the eth2's UMEM freelist.
 In addition, the original four packet buffer from eth1, {1, 2, 3, 4}, is
 recycled back to eth1's UMEM freelist.
 
+
+Define:
+baseline rxdrop vs OVS-AFXDP rxdrop
+baseline l2fwd vs OVS-AFXDO l2fwd
 \subsection{Performance Evaluation}
-% testbed
+
+\subsubsection{Testbed}
 
 When forwarding packets using AF\_XDP with OVS, two CPUs show up
 100\% utilitization:
@@ -630,6 +655,8 @@ and packets parsing, lookup and action execution.
 Our initial prototype shows pretty terrible performance, only $0.5Mpps$ rxdrop.
 We investigated and our first fix is to enable OVS's PMD-mode,
 Poll-Mode-Driver, to the afxdp netdev.
+
+\subsubsection{PMD netdev}
 In OVS, a non-pmd mode netdev does packet receiption by putting all the receiving
 netdev's file descript together and ovs-vswitch polls them when there is an fd ready
 to perform I/O.  As a result, the fd of the XSK is {\em shared} with other fds, and
@@ -647,6 +674,7 @@ packet, up to maximum of 32 packets. In addition, we enable high memory page 1GB
 reduce the page fault overhead.  With the above fixes/optimizations, the rxdrop
 performance increases to around $10Mpps$
 
+\subsubsection{Memory Management and Locks}
 For every stage of the optimization, we use Linux perf extensively, e.g., perf stat
 and perf record/report.  With the above new design, we observe the new bottleneck
 is at the UMEM memory pool we introduce to maintain the UMEM freelist, and the
@@ -667,39 +695,67 @@ from the head of the list.
 allocated in continuous memory region, and pointers (head and tail) point for
 Consumer takes elements from the tail and when placing back, producer, puts
 them into where head pointer points to.
-\item ptr\_stack: Similar to ptr\_ring, but consumer and producer always use
-the top few element, thus similar to push pop. Compared
-
+\item ptr\_stack: Similar to ptr\_ring, an array of elements are allocated
+in continuous memory region, but both consumer and producer takes elements
+from beginning of the array.
 \end{itemize}
-% lock
-% push/pop
-% preallocate array
-Since the UMEM 
+
+Although we allocate one UMEM per netdev, there might be multiple queues per
+netdev sharing the same UMEM. As a result, the above three data structures
+all require a mutex lock before accessing UMEM freelist. Linux perf reports
+pthread\_mutex\_lock as one of the top CPU utilization function, and overall
+shows around $2Mpps$ overhead for rxdrop experiments.
+We change our design by 1) allocating per-queue UMEM region and 2)
+allocating one pmd thread per queue. As a result, no lock is needed because
+the each queue has only one thread and its own set of UMEM elements.
+
+%\subsubsection{Metadat Allocation}
+With the above change, Linux perf shows that the packets metadata allocation
+takes a lot of CPU cycles, the dp\_packet\_init, dp\_packet\_set\_data.
+So instead of allocating packet metadata at packet reception time, we
+implement two data structures and compare their performance:
+\begin{itemize}
+\item Inlining in UMEM buffer: Since we already allocate 2K chunk for each
+UMEM buffer, we reserve the first 256-byte in each UMEM element as struct dp\_packet
+and initialize the dp\_packet as much as we can at allocation time.
+So when packets arrive, each packet already has its packet metadata at a const
+offset ahead.
+\item Array on heap: This design simply allocate a continuous memory region
+storing an array of packet metadata, and initialize them as much as we can.
+\end{itemize}
+
+%complete separation of the allocation of metadata structures from the allocation of packet data buffers.
+% see mbuf dpdk https://doc.dpdk.org/guides/prog_guide/mbuf_lib.html
+%Embed metadata within a single memory buffer the structure followed by a fixed size area for the packet data.
+%Use separate memory buffers for the metadata structure and for the packet data.
+
+With the above design change, we found that using the ptr\_stack with
+array on heap get the best performance. Largely due to both data structures
+have better spatial locality and more batching friendly.
+For example, setting up 32 packet metadatas in an array definitely incurs
+less cache misses than setting up in 32 elements in UMEM.
+And getting 32 free UMEM elements from ptr\_stack has similar benefits.
+With the above decision, the OVS rxdrop shows $17Mpps$, only $2Mpps$ less
+than the baseline xdpsock rxdrop.
+
+\subsubsection{Batching Send Syscall}
+%574.790 M/sec  
+We continued measured the performance of OVS-AFXDP l2fwd and.
+observed only $4Mpps$, compared to $17Mpps$ baseline xdpsock.
+Again, by analysis using perf, we found that the OVS pmd thread under rxdrop
+has much fewer context switches compared to the l2fwd, indicating that
+the PMD process spends much more time in kernel space than in userspace.
+By using strace, we saw that the l2fwd experiement calls sendto system call
+at very high frequeuce, because from Figure~\ref{afxdptx}, we design to check
+the success of send (step 4) immediately after issusing send (step 3).
+We change the design by calling send syscall (step 3) only when TX ring is
+closed to full, e.g., when 3/4 ring elements have been used.
+In specific case, instead of issuing send syscall for a batch of 32 packets
+and making sure they are done, we only issue send when there are 512 outstanding
+packets.  With this change, the OVS-AFXDP l2fwd experiment shows around $14Mpps$.
 
 
-We then observe that the UMEM memory pool implementation ha
-
-
-
-PMD
-HugePage
-UMEM element list
-Batching
-2-CPU operation
-non-blocking send
-non-block receive
-pre-allocation dp\_packet
-rxhash
-
-\mycomment{
-/* PMD: Poll modes drivers.  PMD accesses devices via polling to eliminate
- * the performance overhead of interrupt processing.  Therefore netdev can
- * not implement rx-wait for these devices.  dpif-netdev needs to poll
- * these device to check for recv buffer.  pmd-thread does polling for
- * devices assigned to itself.
- *
- * DPDK used PMD for accessing NIC.
- *}
+%rxhash
 
 
 \bibliography{paper.bib}
