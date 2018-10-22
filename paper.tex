@@ -74,6 +74,18 @@ in userspace.
 \end{abstract}
 
 \section{Introduction}\label{introduction}
+
+
+eBPF, extended Berkeley Packet Filter, enables userspace applications to
+customize and extend the Linux kernel's functionality.  It provides
+flexible platform abstractions for network functions, and is being ported
+to a variety of platforms. 
+The Linux kernel BPF~\cite{cbpf,bpfp},
+with its extension called eBPF~\cite{lwnebpf,daniel1,daniel2},
+provides the desired infrastructure for an OVS datapath implementation.
+Specifically, a packet flowing inside a Linux
+box can be intercepted and trigger the execution of arbitrary eBPF programs.
+
 Among the various ways of using eBPF, OVS has been exploring the power of eBPF in three:
 (1) attaching eBPF to TC, (2) offloading a subset of processing to XDP, and (3) by-passing
 the kernel using AF\_XDP.
@@ -339,47 +351,300 @@ rings:
 Unlike AF\_PACKET which is bound to entire netdev, the XSK is more fine-grained.
 XSK is bound to a specific queue id on a device, so only the traffic/flow 
 sent to the queue id shows up in the XSK.
-\section{OVS eBPF Datapath}
-\mycomment{
-\begin{figure}
-{\scriptsize
-\begin{verbatim}
 
-               _
-              |   +-------------------+
-              |   |    ovs-vswitchd   |
-              |   +-------------------+
-    userspace |   |      ofproto      |<-->OpenFlow controllers
-              |   +--------+-+--------+  
-              |   | netdev | |ofproto-|
-              |   +--------+ |  dpif  |
-                  | netdev | +--------+
-   *eBPF hook --> |provider| |  dpif  |
-                  +---||---+ +--------+
-              |       ||     |  dpif  | <--- *eBPF provider
-              |       ||     |provider|
-              |_      ||     +---||---+
-                      ||         ||
-               _  +---||-----+---||---+
-              |   |          |datapath| <--- *eBPF datapath
-       kernel |   |          +--------+
-              |   |                   |
-              |_  +--------||---------+
-                           ||
-                        physical
-                           NIC
-\end{verbatim}
+\section{OVS eBPF Datapath}
+\myfigcross{ovsebpf}{5.5in}{The overall architecture of OVS eBPF datapath
+consists of multiple eBPF programs which are tail-called dynamically, maps
+which are shared between eBPF programs and userspace applications, and
+ovs-vswitchd as the management plane for all components.}
+
+\subsection{eBPF Configuration and Maps}
+The OVS eBPF datapath consists of one ELF-formatted object file which provides
+the full functionality of an OVS datapath. This object defines
+a set of maps and a set of eBPF programs which implement a subset of
+the datapath functionality.  To bootstrap, we load the eBPF program into
+the kernel using \verb+iproute+. One of the programs is marked
+within the ELF file to indicate that it should be
+attached to the hook point; the other programs are only executed via tail
+calls rooted in the eBPF hook point.  The ELF file also defines multiple persistent eBPF maps, which are
+pinned to the BPF filesystem ~\cite{bpfpmap}
+for sharing between different eBPF programs and \verb+ovs-vswitchd+.
+The OVS datapath requires the following eBPF maps:
+\begin{itemize}
+\item Flow key. This is the internal representation of the protocol headers
+    and metadata for the current packet being processed, defined in the P4~\cite{p4} language.
+\item Flow Table. This is a hash table whose key is the 32-bit hash value
+of the flow key, from both packet and its metadata,
+and value equals an array of actions to execute upon the flow.
+\item Stats Table. This is similar to the flow table, but rather than holding
+an array of actions to execute for the packet, it contains packet and byte
+statistics for the flow.
+\item Perf Ring Buffer~\cite{ebpfperf,ebpfperf2}. The perf event map
+allows an eBPF program to put user-defined data into a ring buffer which
+may be read from a userspace program. \verb+ovs-vswitchd+ memory maps
+this ring buffer to read packets and metadata from the eBPF program for
+flow miss upcall processing.
+\item Program Array. This map allows eBPF programs to tail call other eBPF
+programs. When the BPF loader inserts eBPF programs into the kernel, it assigns
+unique indexes for each program and stores these into the map.  At run time,
+an eBPF program will tail call another program by referring to an index within
+this map.
+\end{itemize}
+
+% locking and synchronization
+The OVS eBPF program is triggered by the TC ingress hook associated with a
+particular network device. Multiple instances of the same eBPF program
+may be triggered simultaneously on different cores which are receiving traffic
+from different network devices.  The eBPF maps, unless specified, have a single
+instance across all cores.  Access to map entries are protected by the kernel
+RCU~\cite{rcu} mechanism which makes it safe to read concurrently.  However,
+there are no built-in mechanisms to protect writers to the maps.
+For the flow table map, OVS avoids the race by ensuring that
+only \verb+ovs-vswitchd+ inserts or removes elements from the map from a single
+thread.  For flow statistics, atomic operations are used to avoid race
+conditions.  Other maps such as the flow key perf ring buffer maps use
+per-cpu instances to manage synchronization.
+
+\subsection{Header Parsing and Lookup}
+\label{parsing}
+When a packet arrives on the TC ingress hook, the OVS eBPF datapath begins
+executing a series of programs, beginning with the parser/lookup program
+as shown in Figure~\ref{ovsebpf:fig}.  The eBPF parser program
+consists of two components; standard protocol parsing and Linux-specific
+metadata parsing.  The protocol parsing is executed directly on the packet
+bytes based on standardized protocols, while the platform-specific metadata
+parsing must occur on the {\em context} provided by the eBPF environment.
+
+The resulting code will assemble the protocol headers and metadata,
+collectively known as the flow key. This flow key is then used to look for an
+entry in the flow table map, to get an array of actions to execute. If there is
+no entry in the flow table map, then the packet and the flow key will be
+written to the perf event map for further processing by \verb+ovs-vswitchd+.
+
+\subsection{Action Execution}
+\label{execution}
+When a lookup is successful the eBPF gets a list of actions to be executed,
+such as outputting the packet to a certain port, or pushing a VLAN tag. The
+list of actions is configured in \verb+ovs-vswitchd+ and may be a variable
+length depending on the desired network processing behaviour. For example, an
+L2 switch doing unknown broadcast sends packet to all its current ports.  The
+OVS datapath's actions is derived from the OpenFlow action specification and
+the OVSDB schema for \verb+ovs-vswitchd+.
+
+One might expect to intuitively write an eBPF program to iterate across the
+list of actions to execute, with each iteration of the loop dealing with a
+particular action in the list.  Unfortunately, this type of iteration implies
+dynamic loops, which are restricted within the eBPF forwarding model. Moreover,
+the variable number of actions also implies that there is no way to guarantee
+the bounded program size, which is limited to 4,096 eBPF bytecode instructions.
+
+To solve these challenges, we first break each type of action logic into an
+independent eBPF program and tail call from one eBPF action program to
+another, as shown in Figure~\ref{ovsebpf:fig}.  This alleviates
+the problem from having 4k instructions for the {\em entire} action list to 4k
+instructions {\em per action}.  Our proof-of-concept implementation shows that
+this limitation is sufficient for all existing actions.  Additionally, the
+design allows each action to be implemented and verified independently.
+Second, to solve the dynamic looping problem, we convert the variable length
+list of actions into a fixed length 32-element array.  As a result,
+flow table lookup always returns an array of 32 actions to be executed,
+and the LLVM compiler unrolls the loop to pass the BPF verifier.
+If a matching flow has less than 32 actions to execute, the rest of the
+actions is no-op, and we short-cut the action execution to the deparser.
+If a matching flow has more than 32 actions, then the eBPF datapath delegates
+the execution to userspace datapath, i.e., the slow path. For many use cases,
+this is sufficient; there is room to further optimize this path in the future
+if common cases require more than 32 actions.
+
+Each action also requires certain action-specific metadata to execute.
+For example, an output action would require an {\em ifindex} to
+indicate the output interface, while a push\_vlan action needs the {\em VLAN ID}
+to be inserted into the VLAN tag.  To accommodate this, the array element not
+only contains the action to execute, but also the metadata required by the
+particular action. The size of each element must be big enough to hold the
+metadata for any action, as it is a fixed sized array. Future work may
+relax this requirement.
+
+Each eBPF program executes in an isolated environment. As a consequence
+of breaking the action list into individual eBPF action programs, some state needs to be
+transferred between the current eBPF program and the next.
+The state to transfer from one eBPF action program to another includes
+(1) The flow key, so that the currently executing eBPF action program can
+lookup the flow table, and (2) The action index in the actions list, so that
+the eBPF action program knows it is executing the $N$th element in the list,
+and at the end of its processing, to tail-call the $n+1$th action program.
+Currently eBPF could use either per-CPU maps as scratch buffers or the
+context's packet control block (\verb+cb+) to pass data between programs. In our
+design, we use one 32-bit value in the \verb+cb+ to keep the action
+index, and per-cpu maps to save the flow key.
+%As a result, there is additional overhead of map lookup per action.
+
+% an example to illustrate
+Figure~\ref{ovsebpf:fig} also demonstrates an example eBPF execution of a
+packet forwarded to port 2 as well as port mirroring to a VLAN port with VLAN ID
+100 at port 3.  Once the packet is parsed,
+the flow table lookup returns an action list of output:2, push\_vlan:100,
+output:3.  At the end of the parser+lookup program, it tail calls the eBPF
+output program as the first step to kick start action execution.
+The execution of this output program {\em overwrites} the caller's stack,
+so it has to look up the flow table map to retrieve the flow key,
+and execute the output action.  Once done, the output action increments the
+action index from 0 to 1, saves it in \verb+cb+, and tail-calls the next action
+program, which is push\_vlan.  The push\_vlan eBPF program again 
+looks up the flow table, and fetches the action metadata at index 1
+and executes the push VLAN action using a BPF helper function.
+The third output action follows the same procedure and finally sends the
+packet out to port 3.
+\saveforlater{Appendix A shows the eBPF helper functions used in
+each eBPF action program implementation.}
+
+\subsection{Flow Miss Upcall and Installation}
+One of the important tasks of the OVS datapath is to pass any packet that
+misses its flow table to the slow path to get instructions for
+further processing.  In the existing OVS {\em kernel} datapath implementation,
+the missed packet is sent to \verb+ovs-vswitchd+, which processes the packet,
+inserts a flow into the flow table, and re-injects the packet into the kernel
+datapath using the Linux generic netlink interface.  For the eBPF datapath, this
+design implies two requirements: (1) a way for the eBPF program to communicate
+with userspace, and (2) a mechanism for the userspace to re-insert packet into
+the eBPF program.
+
+% upcall: how ebpf work 
+To address the first requirement, we use the support for Linux perf ring
+buffers and the \verb+skb_event_output()+ eBPF helper function~\cite{ebpfperf}
+which allows the eBPF program to pass data to the userspace through the Linux perf
+ring buffer~\cite{ebpfperf}.  During miss upcall processing, the eBPF program
+will insert the full packet and the current flow key into the perf ring buffer.
+To receive the data from userspace, \verb+ovs-vswitchd+ runs a thread which
+maps the ring buffer to its virtual memory using mmap system call, and polls
+the buffer using the poll system call. If there is incoming data from the ring buffer, the
+thread is woken up, it reads from the buffer and processes the packet and
+metadata. The result of this processing will be inserted into the flow table
+map.
+% down call: how to re-insert packet
+To address the second requirement, we construct a dedicated Linux TAP device
+which also has the OVS eBPF datapath program attached to it.
+\verb+ovs-vswitchd+ sends the missed packet using an AF\_PACKET socket,
+triggering the underlying eBPF program for further processing.
+This program is very similar to the
+previously-used parser+lookup program, with minor changes. Specifically, this
+packet was originally received on one device, however when \verb+ovs-vswitchd+
+sends the packet on the TAP device, the eBPF program is triggered for the TAP
+device instead. So, the platform metadata for incoming port misidentifies the
+source as the TAP device. To ensure that the packet lookup occurs correctly,
+\verb+ovs-vswitchd+ prepends the port number to the beginning of the packet
+data, then when the eBPF program for the dedicated TAP device processes the
+packet, it will read this port number into the metadata, then strip this port
+from the packet. The resulting packet is identical to the originally-received
+packet, and now the metadata will match the metadata originally generated by
+the parser+lookup the first time the packet was received. The rest of the
+lookup, actions execution, and deparser is then executed as per the description
+in the previous sections.
+
+\subsection{Evaluation}\label{evaluation}
+To quantify the performance of the OVS eBPF datapath, we measure the packet
+forwarding rate in millions of packets per second (Mpps), using 64-byte
+packets under different forwarding scenarios. The hardware testbed
+consists of two Intel Xeon E5 2650 servers, each with an Intel 10GbE
+X540-AT2 dual port NIC, with the two ports of the Intel NIC on one server
+connected to the two ports on the identical NIC on the other server. The
+OVS eBPF datapath is installed on one server, acting as a bridge to
+forward packets from one port on the NIC to the other, and vice-versa.
+The other server acts as packet generating host, which runs DPDK
+packet-gen sending at the maximum packet rate of
+$14.88$Mpps. This server sends to one port to the target server, and
+receives the forwarded packets on the other port. All experiments use
+only one CPU core running Linux kernel 4.9-rc6.
+\begin{table}
+\centering
+\small
+\begin{tabular}{|c | c | c| c|}
+\hline
+ {\bf Linux Bridge} & {\bf OVS Kernel } & {\bf Linux TC} & {\bf OVS eBPF}\\ \hline
+ 1.6 Mpps & 1.4 Mpps & 1.9 Mpps & 1.12 Mpps\\ \hline
+\end{tabular}
+\caption{\footnotesize
+Baseline port-to-port forwarding rate using existing Linux subsystems and
+OVS kernel and eBPF.
 }
-\vspace{-1.0em}
-\caption{An example of mirrored packet with outer header containing
-the GRE and ERSPAN header, followed by the innter Ethernet frame.}
-\label{erspanhdr}
-\vspace{-1.0em}
-\end{figure}
-\subsection{Tunnel Support}
-\subsection{Megaflow Support}
-\subsection{Connection Tracking Support}
-}
+\label{table:baseperf}
+\end{table}
+
+\textbf{Baseline Forwarding Performance.}
+We start by conducting a simple port-to-port packet forwarding experiment,
+i.e., receiving packets from one port and outputting to the other,
+using the Linux native bridge, Linux TC, and OVS kernel datapath, as shown in
+Table~\ref{table:baseperf}.
+The native Linux bridge is a simple L2 mac-learning switch with no
+programmability, showing the forwarding rate of $1.6$ Mpps.
+The OVS kernel module, which does additional flow key extraction,
+shows a slower forwarding rate of $1.4$ Mpps.
+For forwarding packets using TC, we have an eBPF program loaded
+into TC, with the program only having one BPF helper function call, the
+bpf\_skb\_redirect, that redirects the incoming packet from one interface
+to another.  Since TC accesses the incoming packets closest to the driver
+layer, it shows the highest performance of $1.9$ Mpps.
+Finally, we measure our proposed OVS eBPF forwarding speed,
+with incoming packets traversing through an eBPF parser+lookup program,
+an output action program, and the deparser program.
+Since the OVS eBPF is implemented based on tail calling these
+additional eBPF programs at TC, we observe the overhead of $0.78$ Mpps,
+a reduction from $1.9$ Mpps to $1.12$ Mpps.
+
+\textbf{Forwarding with action execution.}
+To further investigate the overhead,
+we program one additional action executed before the packet is
+forwarded to the other port.  Since the Linux bridge has no
+programmability, we only compare the OVS kernel datapath with the OVS eBPF
+datapath.  Table~\ref{table:ebpfperf} shows forwarding
+packets while executing the additional action type: hash, push\_vlan,
+set\_dst\_mac, and set\_gre\_tunnel, with the OVS kernel and eBPF datapaths.
+The forwarding performance of these results is bounded by the CPU cost.
+In the case of the hash and vlan actions, the NIC allows the processing
+to be offloaded from the CPU, resulting in minimal performance overhead for
+executing these actions.  As a result, the forwarding rate exhibits little
+to no overhead above the baseline.
+Moreover, for the hash and push\_vlan actions, due to the NIC offloading of
+actions processing, the datapath does not need to execute any modification to
+the packet contents, so the deparser program execution may be optimized out.
+
+To ensure invoking the deparser, the third experiment, set\_dst\_mac, involves
+altering packet data, specifically to modify the destination MAC address. In
+this case, the deparser writes stored metadata from actions processing back to
+the packet. The performance in this experiment drops to $0.84$ Mpps. The drop
+of $0.28$ Mpps from baseline is the result of the deparser writing all known
+packet header metadata back to the packet, and due to extraneous memory copies
+introduced by the P4-to-eBPF compiler. With a more intelligent deparser
+implementation, and by using recent improvements to the eBPF
+API~\cite{dpa1,dpa2}, the performance gap compared with the native kernel
+implementation is expected to shrink.
+
+%The Set DST\_MAC result of $0.84$ Mpps makes the packet modification using the P4-generated deparser.
+Finally, the set\_get\_tunnel action experiment yielded $0.48$ Mpps, which
+represents the additional cost of tunnelling traffic; such traffic must
+traverse the Linux network stack twice, once for overlay traffic and
+once for underlay traffic. The eBPF result is also more expensive than
+the existing Linux implementation, but with a narrower performance gap
+than the earlier experiments. The majority of processing in this case occurs
+outside of OVS, so the overhead of the eBPF datapath has less effect.
+
+\begin{table}
+\centering
+\small
+\begin{tabular}{|c | p{1.4cm} | p{1.4cm}| c|}
+\hline
+{\bf Action} & {\bf eBPF DP} & {\bf Kernel DP} & {\bf Overhead}\\ \hline 
+hash & 1.12 & 1.34 & 16\%\\ \hline
+push\_vlan & 1.11 & 1.32 & 15\% \\ \hline
+set\_dst\_mac & 0.84 &  1.28 & 34\% \\ \hline
+%set\_dst\_mac (no parser) & 1.14 & -- & --\\ \hline
+set\_gre\_tunnel & 0.48 & 0.57 & 8\%\\ \hline 
+\end{tabular}
+\caption{\footnotesize Comparison of single core forwarding rate in Mpps
+with eBPF and Kernel Datapath, with the additional
+action executed before forwarding the packet to another port.}
+\label{table:ebpfperf}
+\end{table}
 
 \section{Userspace OVS with AF\_XDP}
 \begin{figure}
