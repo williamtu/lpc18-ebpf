@@ -60,62 +60,103 @@
 eBPF is an emerging technology in Linux kernel with the goal of making Linux kernel
 extensible by providing an eBPF virtual machine with safety guarantee.
 Open vSwitch, OVS, is a software switch running majorly in Linux
-operating systems and interacts with Linux kernel module,
-the openvswitch.ko.
-In this paper we describe our efforts to make use of eBPF technology in OVS.
-We present the design, implementation, and evaluation of two projects:
-the OVS-eBPF project and the OVS-AFXDP project.
-OVS-eBPF has the goal of re-writing existing flow processing features
-in openvswitch kernel module into eBPF code, by attaching eBPF program
+operating systems, its fast path packet process is implemented in Linux kernel
+module, openvswitch.ko.
+To provide greater flexibility and extensibility to OVS datapath, in this
+work, we present our design on making use of eBPF technology in OVS datapath
+development with two projects: the OVS-eBPF project and the OVS-AFXDP project.
+The goal of OVS-eBPF project is to re-write existing flow processing features
+in openvswitch kernel datapath into eBPF program, and attaching it
 to Linux TC.
 On the other hand, the OVS-AFXDP project aims to by-passing the kernel
 using AF\_XDP socket and moves most of the flow processing features
 into userspace.
-
+We demonstrate the feasibility of implementing OVS datapath with the
+aforementioned technologies and present the performance number in this paper.
 \end{abstract}
 
 \section{Introduction}\label{introduction}
 
 eBPF, extended Berkeley Packet Filter, enables userspace applications to
-customize and extend the Linux kernel's functionality.  It provides
+customize and extend the Linux kernel's functionality. It provides
 flexible platform abstractions for network functions, and is being ported
-to a variety of platforms.  Among the various different ways of using eBPF,
-OVS has been exploring the power of eBPF in three:
+to a variety of platforms. In Linux kernel, users can attach eBPF programs
+to TC and XDP hook point as shown in Fig~\ref{ebpf-hook}. Based on this
+design, we explore the possibilities of utilizing eBPF to implement OVS
+datapath in threefold:
 1) in-kernel flow processing by attaching eBPF programs to TC,
-2) offloading a subset of processing to XDP (eXpress Data Path),
+2) offloading a subset of flow processing to XDP (eXpress Data Path),
 and 3) moving the flow processing to userspace by using AF\_XDP.
 
-Attaching eBPF to TC, OVS-eBPF project, started first with the most aggressive goal:
-we planned to re-implement the entire features of OVS kernel datapath under net/openvswitch/* into eBPF code.
-We worked around a couple of limitations, for example, the lack of TLV (Type-Length-Value) support
-led us to redefine a binary kernel-user API using a fixed-length array;
-and without a dedicated way to execute a packet, we created a dedicated
-device for user to kernel packet transmission,
-with a different BPF program attached to handle packet execute logic.
-Currently, OVS-eBPF can satisfy most of the basic feature requirement
-for flow processing, including tunneling protocol support.
-But more complicated processing such as connection tracking, NAT,
-(de)fragmentation, and ALG are still under discussion.
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
 
-Moving one layer below TC is called XDP (eXpress Data Path), a much faster layer for packet
-processing, but with almost no extra packet metadata and limited BPF helpers support.
-Depending on the complexity of flows, OVS can offload a subset of its flow processing to XDP
-when feasible. However, the fact that XDP has fewer helper function support implies that either
-1) only very limited number of flows are eligible for offload, or 2) more flow processing logic
-needed to be done in native eBPF code.
++-----------------------+
+|    Network Stack      |
++---------^-------------+
+          |
++---------|-------------+
+| Traffic Control (TC)  | --> eBPF TC hook
++---------^-------------+
+          |
++---------|-------------+
+|     Driver (XDP)      | --> eBPF XDP hook
++---------^-------------+
+          |
++---------|-------------+
+|     Network card      |
++---------^-------------+
+          |
+          | packets
+
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{eBPF program hook points in the Linux kernel.}
+\label{ebpf-hook}
+\vspace{-1.0em}
+\end{figure}
+
+Firstly, in OVS-eBPF project, we attach flow processing eBPF programs to TC.
+We start with the most aggressive goal that we plan to re-implement the entire
+features of OVS kernel datapath under net/openvswitch/* into eBPF code.
+We work around a couple of eBPF limitations, for example, the lack of TLV
+(Type-Length-Value) support leads us to redefine a binary kernel-user API using
+a fixed-length array; without a dedicated way to execute a packet, we
+create a dedicated device that attached a eBPF program to handle packet
+execute logic for userspace to kernel packet transmission.
+Currently, OVS-eBPF can satisfy most of the basic feature for flow processing
+and tunneling protocol support, and we are investigating more complicated
+features such as connection tracking, NAT, (de)fragmentation, and ALG.
+
+We can attach eBPF programs one layer below TC to XDP (eXpress Data Path).
+It is a much faster layer for packet processing, but there is almost no extra
+packet metadata available, and XDP only provides limited kernel helpers.
+Depending on the type of flows, OVS can offload a subset of its flow processing
+to XDP. However, the fact that XDP has fewer helper function support implies
+that either 1) only very limited number of flows are eligible for offload,
+or 2) more flow processing logic needed to be implemented in native eBPF code.
+For example, it is more difficult for OVS datapath to provide tunnel support in
+XDP, since lightweight tunnel kernel helpers is not available.
  
 XDP provides another way for interacting with userspace programs, called AF\_XDP. 
-AF\_XDP is another socket interface for control plane and a shared
-memory API for accessing packets from userspace application.
-OVS today has another full-fledged
-datapath implementation in userspace, called dpif-netdev, mostly used by DPDK community.
-OVS-AFXDP project treats the AF\_XDP as a fast packet-I/O channel, and move
-most of the flow processing into the userspace OVS.
+AF\_XDP is a socket interface for control plane and a shared memory API for
+accessing packets from userspace application. With AF\_XDP, OVS-AFXDP project
+redirect packets to userspace, and processes the packets by OVS's full-fledged
+userspace datapath implementation, dpif-netdev. In this approach, OVS-AFXDP
+project treats the AF\_XDP as a fast packet-I/O channel, and move most of
+the flow processing into the userspace OVS.
 
+This paper focuses on the OVS-eBPF and OVS-AFXDP projects.
+A rough comparison of the two project is shown in Table~\ref{proj-compare}.
+The remainder of this paper is organized as follows:
+In Section~\ref{sec:background}, we first provide some background information
+on eBPF, XDP, and AF\_XDP.  We then present the design, implementation, and
+evaluation of the OVS-eBPF and OVS-AFXDP projects in Section~\ref{sec:ebpf}
+and Section~\ref{sec:af_xdp} respectively. Finally,
+Section~\ref{sec:conclusion} concludes the paper and discusses the future work.
 
-A rough comparison of the two project is shown in Table~\ref{compare}
-This paper describes the design, implementation, and evaluation of the
-OVS-eBPF and OVS-AFXDP projects.
 \begin{table}
 \centering
 \scriptsize
@@ -126,15 +167,16 @@ OVS-eBPF and OVS-AFXDP projects.
   Driver Support & No & Yes \\ \hline
   Minimal Kernel Req. & 4.18 & Unknown \\ \hline
   BPF Code Size & Large & Minimal \\ \hline
-  Extensibility & Low & High \\ \hline
+  Extensibility & Good & Great \\ \hline
   \end{tabular}
 \caption{\footnotesize
 Comparison of the OVS-eBPF project and OVS-AFXDP project.
 }
-\label{compare}
+\label{proj-compare}
 \end{table}
 
 \section{Background}
+\label{sec:background}
 
 OVS is widely used in virtualized data center environments as a software
 switching layer inside various operating systems, including FreeBSD,
@@ -338,6 +380,7 @@ XSK is bound to a specific queue id on a device, so only the traffic/flow
 sent to the queue id shows up in the XSK.
 
 \section{OVS eBPF Datapath}
+\label{sec:ebpf}
 \myfigcross{ovsebpf}{5.5in}{The overall architecture of OVS eBPF datapath
 consists of multiple eBPF programs which are tail-called dynamically, maps
 which are shared between eBPF programs and userspace applications, and
@@ -632,6 +675,7 @@ action executed before forwarding the packet to another port.}
 \end{table}
 
 \section{Userspace OVS with AF\_XDP}
+\label{sec:af_xdp}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
@@ -1026,6 +1070,7 @@ Although there are still rooms for improvement, we are now working on
 making the patch upstream to the OVS code base for more people to use.
 
 \section{Conclusion}
+\label{sec:conclusion}
 This paper describes two eBPF projects related to OVS: OVS-eBPF and OVS-AFXDP.
 
 \bibliography{paper.bib}
