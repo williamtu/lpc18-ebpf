@@ -307,7 +307,7 @@ successfully loaded, an incoming packet received by XDP/TC ingress will execute 
 eBPF program.}
 
 There are several hook points where eBPF programs may be attached in recent
-Linux kernels. XDP is still an eBPF program, but its attachment point is at the
+Linux kernels. XDP~\cite{xdp,xdp2} is still an eBPF program, but its attachment point is at the
 lowest level of the network stack.  Due to its unique attachment point, the XDP
 has its own {\em context}; the input parameters to the XDP eBPF program and return
 values have different meanings than the TC eBPF program. XDP shows performance
@@ -338,10 +338,10 @@ such as AF\_PACKET, userspace programs can receive/send the raw packets
 at the device driver layer.  Although the AF\_PACKET family has been using
 in many places such as tcpdump, its performance does not catch up with the
 recent high speed network devices, such as 40G/100G NICs.
-Performance evaluation~\cite{danialafpacket,johnafxdp} of AF\_PACKET
+Performance evaluation~\cite{af_packet_v4,af_packet_performance} of AF\_PACKET
 shows less than 2 million packets per second using single core.
 
-AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{afxdp} 
+AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{af_xdp_lwn} 
 The core idea behind the AF\_XDP is to leverage the XDP eBPF program's
 early access to the raw packet, and create a high speed channel from the XDP directly to
 a userspace socket interface. In other word, AF\_XDP socket family connects the
