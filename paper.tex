@@ -345,35 +345,35 @@ AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{af_xdp_lwn}
 The core idea behind the AF\_XDP is to leverage the XDP eBPF program's
 early access to the raw packet, and create a high speed channel from the XDP directly to
 a userspace socket interface. In other word, AF\_XDP socket family connects the
-XDP packet receving/sending path to the userspace, bypassing the rest of the
+XDP packet receving/sending path to the userspace, by-passing the rest of the
 Linux networking stacks.
 An AF\_XDP socket, called XSK, is create using the normal socket() system
 call. Unlike AF\_PACKET which uses the send() and receive() syscalls with packet buffer as parameter,
-XSK introduces two rings in userspace: the RX ring and the TX ring.
+XSK introduces two rings in userspace: the Rx ring and the Tx ring.
 The userspace program using XSK needs to properly configure and maintain
-the RX and TX ring structure in order to receive and send packets.
-In addition, all the packet data buffers used in TX/RX ring are allocated from a specific
-memory area called UMEM which consists of a number of fixed size chunks.
-The UMEM also has two rings: the FILL ring and the COMPLETION ring.
-A descriptor in RX/TX ring or in FILL/COMPLETION ring points to the element
-in UMEM by its address.  The address is not system's virtual or physical address
-but simply an offset within the entire UMEM memory region.
+the Rx and Tx ring structures in order to receive and send packets.
+In addition, all the packet data buffers used in Tx/Rx rings are allocated from a specific
+memory area called umem which consists of a number of fixed size chunks.
+The umem also has two rings: the Fill ring and the Completion ring.
+A descriptor in Rx/Tx ring or in Fill/Completion ring points to the element
+in umem by its address. The address is not system's virtual or physical address
+but simply an offset within the entire umem memory region.
 
 For example, to receive packets, a set of descriptors pointing to empty
-packet buffer needs to be filled into the FILL ring.  When packets arrives,
-the userspace program checks the RX ring, fetches the packet data from the
-desciptors, and refills the empty buffer to the FILL ring structure, in order to receive new
+packet buffer needs to be filled into the Fill ring.  When packets arrives,
+the userspace program checks the Rx ring, fetches the packet data from the
+desciptors, and refills the empty buffer to the Fill ring structure, in order to receive new
 incoming packets.  For sending packets, a set of descriptors pointing the
-packet buffer with contents filled to the TX ring then issus send() system call.
+packet buffers with contents filled to the Tx ring, then issus sendmsg() system call.
 It is up to the userspace program to make sure whether the packets have been
-sent or not, by checking the COMPLETION ring structure.
-In summary, users of XSK needs to properly interact with the following four
+sent or not, by checking the Completion ring structure.
+In summary, users of XSK needs to properly program following four
 rings:
 \begin{itemize}
-\item FILL ring: for users to fill UMEM addresses to kernel for receiving packets.
-\item RX ring: for users to access recevied packets. 
-\item TX ring: for users to place packets needed to be sent.
-\item COMPLETION ring: for users to make sure packets are sent.
+\item Fill ring: for users to fill umem addresses to kernel for receiving packets.
+\item Rx ring: for users to access recevied packets. 
+\item Tx ring: for users to place packets needed to be sent.
+\item Completion ring: for users to make sure packets are sent.
 \end{itemize}
 Unlike AF\_PACKET which is bound to entire netdev, the XSK is more fine-grained.
 XSK is bound to a specific queue id on a device, so only the traffic/flow 
@@ -751,8 +751,8 @@ the XSK eBPF maps and key equals zero.
 
 \item Create a AF\_XDP socket:
 Call socket() syscall to create a XSK,
-set up its RX and TX ring buffer, allocate a UMEM region,
-and set up FILL/COMPLETION ring of the UMEM.
+set up its Rx and Tx ring buffer, allocate a umem region,
+and set up Fill/Completion ring of the umem.
 
 \item Load and configure the XSK eBPF map:
 The XSK eBPF maps consists of key value pairs, where key is an u32 index and value is
@@ -761,81 +761,81 @@ key equals zero and the file descriptor, fd, of the XSK as its value.
 As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
 forwards the packet to the XSK.
 
-\item Populate the UMEM FILL ring: Get a couple of UMEM elements and place into FILL ring.
+\item Populate the umem Fill ring: Get a couple of umem elements and place into Fill ring.
 \end{enumerate}
 On the other hand, when a AF\_XDP netdev is detached or closed by user,
-ovs-vswitchd closes the XSK socket, free the UMEM memory region, and
+ovs-vswitchd closes the XSK socket, free the umem memory region, and
 unload the eBPF program and map.
 
-In order to properly set-up the RX/TX/FILL/COMPLETION rings, we implement a
-UMEM memory management API. Basically, it's a list maintaining the unused elements
-in UMEM, called UMEM freelist, and function calls to get/put elements into the list.
+In order to properly program Rx/Tx/Fill/Completion rings, we implement a
+umem memory management layer, call umempool. Basically, it's a data structure
+maintaining the unused/available elements in umem, and GET and PUT access APIs.
 \subsection{Packet Reception}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
-UMEM: total 8 elements, each has 2K chunk size
+umem: total 8 elements, each has 2K chunk size
                  +-------------------------------+
                  |   |   |   |   |   |   |   |   |
                  +-------------------------------+
             addr:  1   2   3   4   5   6   7  8 
 (1) Initial Stat
-           -------------------          UMEM freelist
-FILL Qu  ...| 1 | 2 | 3 | 4 | ...       {5, 6, 7, 8}
+           -------------------          umempool
+Fill r   ...| 1 | 2 | 3 | 4 | ...       {5, 6, 7, 8}
            -------------------
            -------------------
-RX ring  ...|   |   |   |   | ...
+Rx ring  ...|   |   |   |   | ...
            -------------------
 (2) 4 Packets Arrive
-           -------------------          UMEM freelist
-FILL Qu  ...|   |   |   |   | ...       {5, 6, 7, 8}
+           -------------------          umempool
+Fill r   ...|   |   |   |   | ...       {5, 6, 7, 8}
           --------------------
            -------------------
-RX ring  ...| 1 | 2 | 3 | 4 | ...
+Rx ring  ...| 1 | 2 | 3 | 4 | ...
            -------------------
-(3) Get 4 free UMEM elemet and refill
-           -------------------          UMEM freelist
-FILL Qu  ...| 5 | 6 | 7 | 8 | ...       {} 
+(3) Get 4 free umem elemet and refill
+           -------------------          umempool
+Fill r   ...| 5 | 6 | 7 | 8 | ...       {} 
            -------------------
            -------------------
-RX ring  ...| 1 | 2 | 3 | 4 | ...
+Rx ring  ...| 1 | 2 | 3 | 4 | ...
            -------------------
 (4) Pass packets {1, 2, 3, 4} to dpif-netdev
     for parse, lookup, and actions.
 
-(5) Recycle to UMEM freelist, goto step (2)
-            +-------------------        UMEM freelist
-FILL Qu  ...| 5 | 6 | 7 | 8 | ...       {1, 2, 3, 4}
+(5) Recycle to umempool, goto step (2)
+            +-------------------        umempool
+Fill r  ...| 5 | 6 | 7 | 8 | ...       {1, 2, 3, 4}
             +------------------
            -------------------
-RX ring  ...|   |   |   |   | ...
+Rx ring  ...|   |   |   |   | ...
            -------------------
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{An example of how OVS programs the FILL ring and RX ring when
+\caption{An example of how OVS programs the Fill ring and Rx ring when
 processing incoming AF\_XDP packets.}
 \label{afxdprx}
 \vspace{-1.0em}
 \end{figure}
 
-Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the FILL ring and
-the RX ring for receving packets from XSK.  For simplicity to demonstrate
-how AF\_XDP works, assume that there are only eight UMEM buffers, with each buffer's
-size equals 2KB (?).  Initially at step 1, ovs-vswitchd fills four available UMEM elements into
-the FILL ring and waits for incoming packets.  When there are incoming packets,
-at step 2, the FILL ring's four buffer elems have been consumed and moved
-to the RX ring.  In order to keep receiving packets, ovs-vswitchd gets another
-four available UMEM elements from the UMEM freelist, and fills into FILL ring (step 3).
+Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the Fill ring and
+the Rx ring for receving packets from XSK.  For simplicity to demonstrate
+how AF\_XDP works, assume that there are only eight umem buffers, with each buffer's
+size equals 2KB (?).  Initially at step 1, ovs-vswitchd fills four available umem elements into
+the Fill ring and waits for incoming packets.  When there are incoming packets,
+at step 2, the Fill ring's four buffer elems have been consumed and moved
+to the Rx ring.  In order to keep receiving packets, ovs-vswitchd gets another
+four available umem elements from the umempool, and fills into Fill ring (step 3).
 Then ovs-vswitchd creates the metadata needed for the four packet
 buffer \{1, 2, 3, 4\}, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
 the dpif-netdev layer for parse, lookup and action executions.
-Finally, when ovs-vswitchd finishes processing the UMEM buffer, a recycle
-mechanism is triggered to place this buffer back to UMEM freelist (step 5).
-Step 5 makes sure that there are always available elements in FILL ring, so
+Finally, when ovs-vswitchd finishes processing the umem buffer, a recycle
+mechanism is triggered to place this buffer back to umempool (step 5).
+Step 5 makes sure that there are always available elements in Fill ring, so
 that the underlying XDP program in kernel can keep processing packets 
 while the userspace ovs-vswitchd is processing the previous
-received packets on RX ring.
+received packets on Rx ring.
 When step 5 finishes, ovs-vswitchd goes back to step 2, waiting for
 new packets.
 
@@ -843,36 +843,36 @@ new packets.
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
- OVS dpif-netdev has 4 packets at UMEM:{1, 2, 3, 4} received
+ OVS dpif-netdev has 4 packets at umem:{1, 2, 3, 4} received
  from eth1 and plan to send to eth2.
-(1) Get 4 free elements from eth2's UMEM, copy packet data to it
-(2) Create TX descriptors and place into TX ring
-           -------------------        eth2 UMEM freelist
-TX ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
+(1) Get 4 free elements from eth2's umem, copy packet data to it
+(2) Create TX descriptors and place into Tx ring
+           -------------------        eth2 umempool
+Tx ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
            -------------------
            -------------------
-COMPL q  ...|   |   |   |   | ...
+Compl r  ...|   |   |   |   | ...
            -------------------
 (3) Issue sendmsg syscall to eth2's XSK
 (4) Packet transmission is completed
-           -------------------        eth2 UMEM freelist
-TX ring  ...|   |   |   |   | ...       {1, 2, 3, 8}
+           -------------------        eth2 umempool
+Tx ring  ...|   |   |   |   | ...       {1, 2, 3, 8}
            -------------------
            -------------------
-COMPL q  ...| 4 | 5 | 6 | 7 | ...
+Compl r  ...| 4 | 5 | 6 | 7 | ...
            -------------------
-(5) Recycle to eth2 UMEM
-           -------------------        eth2 UMEM freelist
-TX ring  ...|   |   |   |   | ...       {1, 2, 3, 4,
+(5) Recycle to eth2 umem
+           -------------------        eth2 umempool
+Tx ring  ...|   |   |   |   | ...       {1, 2, 3, 4,
            -------------------           5, 6, 7, 8}
            -------------------
-COMPL q  ...|   |   |   |   | ...
+Compl r  ...|   |   |   |   | ...
            -------------------
-(6) Recycle {1, 2, 3, 4} to eth1's UMEM 
+(6) Recycle {1, 2, 3, 4} to eth1's umem 
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{An example of how OVS programs the COMPLETION ring and TX ring when
+\caption{An example of how OVS programs the COMPLETION ring and Tx ring when
 processing incoming AF\_XDP packets from one netdev and sending to another netdev.}
 \label{afxdptx}
 \vspace{-1.0em}
@@ -887,33 +887,33 @@ And both eth1 and eth2 are configured with AF\_XDP support.
 
 Initially, assume ovs-vswitchd receives four packets \{1, 2, 3, 4\} from eth1's XSK
 To send to eth2 using eth2's XSK, ovs-vswitchd first gets four packet buffers,
-\{4, 5, 6, 7\} from eth2's UMEM freelist and copies the packet data from eth1's UMEM
+\{4, 5, 6, 7\} from eth2's umempool and copies the packet data from eth1's umem
 to eth2's \{4, 5, 6, 7\}.  Then TX descriptors for the four packets are
-created and placed into eth2's TX ring (step 2).
+created and placed into eth2's Tx ring (step 2).
 At step 3, sendmsg syscall is issued to signal the kernel to start transmit.
 As the send in XSK is asynchronos and sendmsg syscall only return return zero when
 no error, ovs-vswitch polls the COMPLETION ring to make sure these four
 packets have been sent out (step 4).
 Once the four packets' descriptors show up at the COMPLETION ring, at step 5,
-ovs-vswitchd recycles their UMEM elements back to eth2's UMEM freelist.
+ovs-vswitchd recycles their umem elements back to eth2's umempool.
 In addition, the original four packet buffers from eth1, \{1, 2, 3, 4\}, are
-also recycled back to eth1's UMEM freelist.
+also recycled back to eth1's umempool.
 
 \subsection{Performance Evaluation}
-All of our performance results use a hardware test bed that consists of
+All of our performance results use a hardware test bed consisting of
 two Intel Xeon E5 2440 v2 1.9GHz servers, each with 1 CPU socket and
 8 physical cores with hyperthreading enabled.
 One server, the target server, has an Intel 40GbE XL710 single port NIC,
 and the other server, the source server, has a Netronome NFP-4000 40GbE device.
 The target server runs Linux kernel 4.19-rc4, with i40e driver supporting
-the AF\_XDP mode.
+the AF\_XDP zero copy mode~\cite{af_xdp_patch_i40e, af_xdp_patch_zc}.
 We installed OVS-AFXDP on the target server, and used the source server to
 generates 64-byte single UDP flow packets
 at the rate of 19~Mpps using the DPDK library.
 On the target server, for demonstrating the best performance,
 we disabled the Intel Spectre and Meltdown fixes~\cite{jesper_xdp_perf_drop, retpoline}.
 
-For all our experiments, we fuse a microbenchmark program, called xdpsock,
+For all our experiments, we use a microbenchmark program, called xdpsock,
 as the baseline to compare with OVS-AFXDP implementation.
 xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
 to do simply dropping all packets, rxdrop, or forwarding the packet to the same port as
@@ -928,11 +928,11 @@ e.g.,  \texttt{in\_port=eth1, actions=drop}.
 as it receives, e.g., \texttt{in\_port=eth1, actions=set\_fields:eth2->in\_port, output:eth1}.
 \end{itemize}
 
-Additionally, AF\_XDP provides three operation modes:
-XDP\_SKB: works on devices using generic XDP~\cite{genericxdp},
-XDP\_DRV: works on devices with XDP support, and
-XDP\_DRV ZC (Zero Copy): works on devices with XDP\_XDP zerocopy support.
-For all our experiments, we use the XDP\_DRV ZC mode.
+Additionally, AF\_XDP provides three operation modes, from slowest to fastest:
+skb mode: works on devices using generic XDP~\cite{genericxdp},
+driver mode: works on devices with XDP support, and
+zero-copy driver mode: works on devices with XDP\_XDP zerocopy support.
+For all our experiments, we use the zero-copy driver mode for showing the best performance.
 
 \subsubsection{PMD netdev}
 Our initial prototype shows pretty terrible performance, only $0.5Mpps$ for rxdrop.
@@ -945,7 +945,7 @@ in Figure~\ref{afxdprx} and~\ref{afxdptx}.
 incoming packets, triggering XDP program to pass packets to the XSK, and also
 processing transmission.
 \end{itemize}
-\mycomment{Compared to xdpsock, ovs-vswitchd adds on top of it a UMEM memory pool,
+\mycomment{Compared to xdpsock, ovs-vswitchd adds on top of it a umempool,
 and packets parsing, lookup and action execution.}
 We investigate using Linux perf and our first fix is to enable OVS's PMD-mode,
 Poll-Mode-Driver, to the afxdp netdev.
@@ -964,50 +964,48 @@ configured to create a {\em dedicated} thread for the packet processing.
 In OVS-AFXDP, we create a thread for each XSK's receive queue and the thread keeps polling
 the RX ring for new packets.  Each round of receive polling processes a batch of
 packets, up to a maximum of 32 packets. In addition, we enable 1GB huge memory page support
-to reduce the page fault overhead.  With the above fixes/optimizations, the rxdrop
-performance increases to around $10Mpps$
+to reduce the page fault overhead.
 
 \subsubsection{Memory Management and Locks}\label{memorym}
-For every stage of the optimization, we use Linux perf extensively, e.g., perf stat
+For every stage of optimizations, we use Linux perf extensively, e.g., perf stat
 and perf record/report.  With the above new design, we observe the new bottleneck
-is at the UMEM memory pool APIs we introduce to maintain the UMEM freelist, as well as at the
+is at the umempool APIs we introduce, as well as at the
 packet metadata allocation, struct dp\_packet, for every received packet.
 We introduce two major APIs, umem\_elem\_get(), which gets N free element from the
-UMEM freelist, and umem\_elem\_put(), which places back the free UMEM buffer to
-the freelist, similar to the concept of producer (put) and consumer (get).
-We implemented three different data structures of UMEM memory pool as below
+umempool, and umem\_elem\_put(), which places back the free umem buffer to
+the umempool, similar to the concept of producer (put) and consumer (get).
+We implemented three different data structures of umempool as below
 to compare their performance.
 \begin{itemize}
-\item list\_head: Similar to Linux kernel's list\_head, each element contains its
-UMEM element address, and a next pointer points to next free element.
-Due to the nature of list\_head, elements are sparse in memory.
-Consumer always takes the first element, head, and producer also places back
-to the head of the list.
-\item ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
+\item FIFO-list\_head: We reversed first 8-byte of the umem buffer as a next pointer,
+pointing to the next available element in umempool, and implement FIFO access get/set
+APIs. The list\_head pointer always points to the first available umem element.
+\item FILO-ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
 allocated in continuous memory region.
 Consumer takes elements from the tail pointer and when placing back, producer, puts
 them into where head pointer points to.
-\item ptr\_stack: Similar to ptr\_ring, an array of elements are allocated
+\item FIFO-ptr\_array: Similar to Linux kernel's skb\_array~\cite{skbarray},
+an array of elements are allocated
 in continuous memory region, but both consumer and producer take elements
 from beginning of the array.
 \end{itemize}
 
-Although we allocate one UMEM per netdev, there might be multiple queues per
-netdev sharing the same UMEM. As a result, the above three data structures
-require a mutex lock before accessing UMEM freelist. Linux perf reports
+Although we allocate one umem per netdev, there might be multiple queues per
+netdev sharing the same umem. As a result, the above three data structures
+require a mutex lock before accessing umem freelist. Linux perf reports
 pthread mutex lock related APIs as ones of the top CPU utilization functions.
-We change our design by 1) allocating per-queue UMEM region and 2)
+We change our design by 1) allocating per-queue umem region and 2)
 allocating one pmd thread per queue. As a result, no lock is needed because
-each queue has only one thread and its own set of UMEM elements.
+each queue has only one thread and its own set of umem elements.
 
-\subsubsection{Metadata Pre-allocation}
+\subsubsection{Metadata Allocation}
 Moving forward, Linux perf shows that the packet metadata allocation
 takes a lot of CPU cycles, i.e.,  dp\_packet\_init(), dp\_packet\_set\_data().
-So instead of allocating packet metadata at packet reception time, we
-implement two data structures and compare their performance:
+So instead of allocating packet metadata at packet reception time, we pre-allocate
+the packet metadata and implement two data structures to compare their performances:
 \begin{itemize}
 \item Embedding in packet buffer: Since we already allocate 2K chunk for each
-UMEM packet buffer, we reserve the first 256-byte in each UMEM element as struct dp\_packet
+umem packet buffer, we reserve the first 256-byte in each umem element as struct dp\_packet
 and initialize the dp\_packet as much as we can at allocation time.
 This is similar to the DPDK mbuf design~\cite{dpdkmbuf}, where a single memory buffer
 is used for both packet data and metadata.
@@ -1020,12 +1018,12 @@ storing an array of packet metadata, and initialize them as much as we can.
 %Embed metadata within a single memory buffer the structure followed by a fixed size area for
 % the packet data.
 
-With the above design change, we found that using the ptr\_stack in section~\ref{memorym} with
+With the above design change, we found that using the FIFO-ptr\_array in section~\ref{memorym} with
 separate from packet buffer design yields the best performance. Largely due to both data structures
 have better spatial locality and more batching friendly, when all data are allocated together.
 For example, setting up 32 packet metadatas in an array definitely incurs
-less cache misses than setting up in 32 elements in UMEM.
-And getting 32 free UMEM elements from ptr\_stack has similar benefits.
+less cache misses than setting up in 32 elements in umem.
+And getting 32 free umem elements from ptr\_array has similar benefits.
 With the above decision, the OVS rxdrop shows around $19Mpps$, closed
 to the baseline xdpsock rxdrop performance.
 
