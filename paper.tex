@@ -977,14 +977,14 @@ the umempool, similar to the concept of producer (put) and consumer (get).
 We implemented three different data structures of umempool as below
 to compare their performance.
 \begin{itemize}
-\item FIFO-list\_head: We reversed first 8-byte of the umem buffer as a next pointer,
+\item FILO-list\_head: We reversed first 8-byte of the umem buffer as a next pointer,
 pointing to the next available element in umempool, and implement FIFO access get/set
 APIs. The list\_head pointer always points to the first available umem element.
-\item FILO-ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
+\item FIFO-ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
 allocated in continuous memory region.
 Consumer takes elements from the tail pointer and when placing back, producer, puts
 them into where head pointer points to.
-\item FIFO-ptr\_array: Similar to Linux kernel's skb\_array~\cite{skbarray},
+\item FILO-ptr\_array: Similar to Linux kernel's skb\_array~\cite{skbarray},
 an array of elements are allocated
 in continuous memory region, but both consumer and producer take elements
 from beginning of the array.
@@ -1018,7 +1018,7 @@ storing an array of packet metadata, and initialize them as much as we can.
 %Embed metadata within a single memory buffer the structure followed by a fixed size area for
 % the packet data.
 
-With the above design change, we found that using the FIFO-ptr\_array in section~\ref{memorym} with
+With the above design change, we found that using the FILO-ptr\_array in section~\ref{memorym} with
 separate from packet buffer design yields the best performance. Largely due to both data structures
 have better spatial locality and more batching friendly, when all data are allocated together.
 For example, setting up 32 packet metadatas in an array definitely incurs
