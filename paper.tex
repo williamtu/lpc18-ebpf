@@ -329,52 +329,61 @@ eBPF programs.
 \subsection{AF\_XDP Socket}
 % afxdp
 AF\_XDP is a new Linux address family that aims for high packet I/O
-performance. Traditionally, a userspace program receives packets from
-kernel through the socket API.  By creating a socket with address family
-such as AF\_PACKET, userspace programs can receive/send the raw packets
+performance. It enables another way for a userspace program to receive
+packets from kernel through the socket API. For example, currently, creating
+a socket with address family AF\_PACKET, userspace programs can receive/send
+the raw packets
 at the device driver layer.  Although the AF\_PACKET family has been using
 in many places such as tcpdump, its performance does not catch up with the
 recent high speed network devices, such as 40G/100G NICs.
 Performance evaluation~\cite{af_packet_v4,af_packet_performance} of AF\_PACKET
 shows less than 2 million packets per second using single core.
 
-AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{af_xdp_lwn} 
+AF\_XDP was proposed and upstreamed to Linux kernel since 4.18~\cite{af_xdp_lwn}.
 The core idea behind the AF\_XDP is to leverage the XDP eBPF program's
-early access to the raw packet, and create a high speed channel from the XDP directly to
-a userspace socket interface. In other word, AF\_XDP socket family connects the
-XDP packet receving/sending path to the userspace, by-passing the rest of the
-Linux networking stacks.
-An AF\_XDP socket, called XSK, is create using the normal socket() system
-call. Unlike AF\_PACKET which uses the send() and receive() syscalls with packet buffer as parameter,
-XSK introduces two rings in userspace: the Rx ring and the Tx ring.
-The userspace program using XSK needs to properly configure and maintain
-the Rx and Tx ring structures in order to receive and send packets.
-In addition, all the packet data buffers used in Tx/Rx rings are allocated from a specific
-memory area called umem which consists of a number of fixed size chunks.
-The umem also has two rings: the Fill ring and the Completion ring.
-A descriptor in Rx/Tx ring or in Fill/Completion ring points to the element
-in umem by its address. The address is not system's virtual or physical address
-but simply an offset within the entire umem memory region.
+early access to the raw packet, and provide a high speed channel from the XDP
+directly to a userspace socket interface. In other word, AF\_XDP socket family
+connects the XDP packet receiving/sending path to the userspace, by-passing the
+rest of the Linux networking stacks.
+An AF\_XDP socket, called XSK, is created by using the normal socket() system
+call. Unlike AF\_PACKET which uses the send() and receive() syscalls with packet
+buffer as parameter, XSK introduces two rings in userspace: the Rx ring and the
+Tx ring. These two rings are per-XSK data structure that the userspace program
+needs to properly configure and maintain in order to receive and send packets.
+Moreover, to provide zerocopy support for AF\_XDP, all the packet data buffers
+used in Tx/Rx rings are allocated from a specific memory region called \em{umem}
+which consists of a number of fixed size memory chunks.
+Two rings, the Fill ring and the Completion ring, are associated with a umem,
+and a umem can be shared between multiple XSKs.
+Each element in the Rx/Tx ring or in Fill/Completion ring is a descriptor that
+contains an address that points to a chunk in umem. The address is not system's
+virtual or physical address but simply an offset within the entire umem memory
+region.
 
-For example, to receive packets, a set of descriptors pointing to empty
-packet buffer needs to be filled into the Fill ring.  When packets arrives,
-the userspace program checks the Rx ring, fetches the packet data from the
-desciptors, and refills the empty buffer to the Fill ring structure, in order to receive new
-incoming packets.  For sending packets, a set of descriptors pointing the
-packet buffers with contents filled to the Tx ring, then issus sendmsg() system call.
-It is up to the userspace program to make sure whether the packets have been
-sent or not, by checking the Completion ring structure.
-In summary, users of XSK needs to properly program following four
-rings:
+For example, to receive packets from XSK, firstly, a set of descriptors pointing
+to empty packet buffer need to be pushed into the Fill ring.  When a packet
+arrives, kernel pops descriptors from the Fill ring, fills in the data into the
+memory chunks pointed by the descriptors, and pushes the descriptors back to
+the Rx ring.
+The userspace program then checks the Rx ring, fetches the packet data from the
+descriptors, and refills the empty buffer back to the Fill ring structure, so
+that kernel can fill in new incoming packets later on.
+For sending packets, the userspace program pushes a set of descriptors that
+point to the packet buffers to the Tx ring, then issues sendmsg() system call.
+Kernel consumes packet buffers asscoaited with the Tx ring, and pushes
+transmitted descriptors to the Tx ring.
+The userspace program then checks the Completion ring to determine whether the
+packets have been sent.
+In summary, XSK users need to properly program following four rings:
 \begin{itemize}
 \item Fill ring: for users to fill umem addresses to kernel for receiving packets.
-\item Rx ring: for users to access recevied packets. 
+\item Rx ring: for users to access received packets.
 \item Tx ring: for users to place packets needed to be sent.
-\item Completion ring: for users to make sure packets are sent.
+\item Completion ring: for users to check if packets are sent.
 \end{itemize}
-Unlike AF\_PACKET which is bound to entire netdev, the XSK is more fine-grained.
-XSK is bound to a specific queue id on a device, so only the traffic/flow 
-sent to the queue id shows up in the XSK.
+Unlike AF\_PACKET which is bound to entire netdev, the binding of XSK is more
+fine-grained. XSK is bound to a specific queue on a device, so only the
+traffic/flow sent to the queue shows up in the XSK.
 
 \section{OVS eBPF Datapath}
 \label{sec:ebpf}
