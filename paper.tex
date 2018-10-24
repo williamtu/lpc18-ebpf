@@ -715,18 +715,17 @@ action executed before forwarding the packet to another port.}
 \end{figure}
 
 \subsection{Datapath and Netdev Interface}
-OVS includes a userspace datapath interface (dpif) implemenation, called dpif-netdev.
-Unlike the dpif-netlink which talks to the Linux Open vSwitch kernel
-module through netlink API, the dpif-netdev works completely in userspace.
-As a result, dpif-netdev expects to receive and send packets from its userspace
-interface.  One major use case of dpif-netdev is OVS-DPDK~\cite{ovsdpdk},
-where the packet reception and transmission are all done in DPDK's userspace
+OVS provides a userspace datapath interface (dpif) implementation, called
+dpif-netdev. The dpif-netdev userspace datapath receives and transmits
+packets from its userspace interface.  One major use case of dpif-netdev
+is OVS-DPDK~\cite{ovsdpdk}, where the packet reception and transmission
+are all conducted in DPDK's userspace
 library. The dpif-netdev is designed to be agnostic to how the network
 device accessing the packets, by an abstraction layer called netdev.
-So Packets might come from DPDK packet I/O library,
+Therefore, packets can come from DPDK packet I/O library,
 a Linux AF\_PACKET socket API, or in our case, the AF\_XDP socket interface,
 as long as each mechanism implements its own netdev interface.
-Once dpif-netdev receives a packet, it follows the same mechanism doing
+Once dpif-netdev receives a packet, it follows the same mechanism performing
 parse, lookup the flow table, and apply actions to the packet.
 
 Figure~\ref{ovsafxdp} shows the architecture of userspace OVS with AF\_XDP.
@@ -746,14 +745,14 @@ issuing the following commands:
         set int eth0 type="afxdp"
 \end{verbatim}
 }
-ovs-vswitch does the following steps to bring up the
+ovs-vswitchd does the following steps to bring up the
 AF\_XDP netdev:
 \begin{enumerate}
 \item Attach a XDP program to the netdev's queue:
-The XDP program OVS attaches is fixed and consists
-of only a few line of code, which receives the packet and
-calls the \texttt{bpf\_redirect\_map()} helper function with
-the XSK eBPF maps and key equals zero.
+OVS attaches a simple and fixed XDP program to each netdev's queue.
+The program only consists of a few lines of code, which receives the
+packets and redirects them to XSK by calling the \texttt{bpf\_redirect\_map()}
+helper function.
 
 \item Create a AF\_XDP socket:
 Call socket() syscall to create a XSK,
@@ -761,22 +760,24 @@ set up its Rx and Tx ring buffer, allocate a umem region,
 and set up Fill/Completion ring of the umem.
 
 \item Load and configure the XSK eBPF map:
-The XSK eBPF maps consists of key value pairs, where key is an u32 index and value is
-the file descript of the XSK.  ovs-vswitchd simply programs one entry to the map with
-key equals zero and the file descriptor, fd, of the XSK as its value.
-As a result, the XDP program calling \texttt{bpf\_redirect\_map} with key=0 will
-forwards the packet to the XSK.
+The XSK eBPF maps consists of key value pairs, where key is an u32 index and
+value is the file descriptor of the XSK.  ovs-vswitchd programs an entry to
+the map with the key as queue id and the file descriptor, fd, of the XSK as
+its value.
+Therefore, the XDP program calling \texttt{bpf\_redirect\_map} will derive
+the corresponding XSK with the queue id.
 
 \item Populate the umem Fill ring: Get a couple of umem elements and place into Fill ring.
 \end{enumerate}
-On the other hand, when a AF\_XDP netdev is detached or closed by user,
+Finally, when a AF\_XDP netdev is detached or closed by user,
 ovs-vswitchd closes the XSK socket, free the umem memory region, and
 unload the eBPF program and map.
 
+\subsection{umem memory management}
 In order to properly program Rx/Tx/Fill/Completion rings, we implement a
 umem memory management layer, call umempool. Basically, it's a data structure
 maintaining the unused/available elements in umem, and GET and PUT access APIs.
-\subsection{Packet Reception}
+\subsubsection{Packet Reception}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
@@ -845,7 +846,7 @@ received packets on Rx ring.
 When step 5 finishes, ovs-vswitchd goes back to step 2, waiting for
 new packets.
 
-\subsection{Packet Transmission}
+\subsubsection{Packet Transmission}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
