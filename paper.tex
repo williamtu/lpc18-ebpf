@@ -178,6 +178,7 @@ Comparison of the OVS-eBPF project and OVS-AFXDP project.
 \section{Background}
 \label{sec:background}
 
+\subsection{OVS Forwarding Model}
 OVS is widely used in virtualized data center environments as a software
 switching layer inside various operating systems, including FreeBSD,
 Windows Hyper-V, Solaris and Linux. As shown in
@@ -208,8 +209,6 @@ which caches forwarding decisions for traffic aggregates beyond individual
 connections.  In recent versions of OVS, datapath implementations include
 features such as connection tracking, stateful network address translation, and
 support for layer 3 tunneling protocols.
-
-\subsection{OVS Forwarding Model}
 
 \begin{figure}
 {\scriptsize
@@ -306,17 +305,15 @@ subsequently attaches the program to the TC/XDP ingress hook point.  Once
 successfully loaded, an incoming packet received by XDP/TC ingress will execute the
 eBPF program.}
 
-There are several hook points where eBPF programs may be attached in recent
-Linux kernels. XDP~\cite{xdp,xdp2} is still an eBPF program, but its attachment point is at the
-lowest level of the network stack.  Due to its unique attachment point, the XDP
-has its own {\em context}; the input parameters to the XDP eBPF program and return
-values have different meanings than the TC eBPF program. XDP shows performance
-closed to line rate of the device, because the XDP program is triggered immediately
-at the network device driver's packet receiving code path.
-Due to its lowest hook point at the networking stack, XDP input parameter has only
-pointer to the beginning and end of the packet data plus a few metadatas.
-XDP also supports accessing to eBPF maps and tail calls, but with much
-less number of helper functions than the eBPF program at TC hook.
+There are several hook points where eBPF programs can be attached in recent
+Linux kernels. XDP~\cite{xdp,xdp2} is another eBPF program hook point where
+its attachment point is at the lowest level of the network stack.
+XDP demonstrates high performance that closed to the line rate of the device,
+since the eBPF programs attached to XDP hook point are triggered immediately
+in the network device driver's packet receiving code path. For the same reason,
+eBPF program in XDP can only access the packet data and a few metadata.
+XDP supports accessing to eBPF maps and tail calls, but much less number of
+helper functions is available compared to the TC hook point.
 
 Figure~\ref{tcebpf:fig}
 shows the typical workflow for installing an eBPF program to the TC/XDP hook point,
@@ -324,8 +321,8 @@ and how packets trigger eBPF execution.  Clang and LLVM takes a program
 written in C and compiles it down to the eBPF instruction set, then emits an
 ELF file that contains eBPF instructions.  An eBPF loader, such as iproute,
 takes the ELF file, parses the programs and maps information from it and
-issues BPF syscalls to load the program.  If it passes the BPF verifier,
-then the program is attached to the hook point (in this case, TC/XDP), and
+issues BPF syscalls to load the program.  If the program passes the BPF verifier,
+then it is attached to the hook point (in this case, TC/XDP), and
 subsequent packets through the TC/XDP ingress hook will trigger execution of the
 eBPF programs.
 
