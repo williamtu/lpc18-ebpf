@@ -550,3 +550,180 @@
   year={2016},
   organization={ACM}
 }
+@misc{rdma,
+ title = "{RDMA - Remote Direct Memory Access}",
+ year = {2018},
+ howpublished = "URL \url{http://www.rdmaconsortium.org/}"
+}
+
+@misc{dpdk,
+ author = "{DPDK Community}",
+ title = "{DPDK - DataPlane Development Kit}",
+ year = {2018},
+ howpublished = "URL \url{http://www.dpdk.org/}"
+}
+
+@misc{exanic,
+ author = "{ExaBlaze}",
+ year = {2018},
+ title = "{ExaNIC}",
+ howpublished = "URL \url{http://exablaze.com/}"
+}
+
+@misc{openonload,
+ author = "{SolarFlare}",
+ year = {2018},
+ title = "{OpenOnload}",
+ howpublished = "URL \url{http://openonload.org/}"
+}
+
+@misc{libpcap,
+ title = "libpcap and tcpdump",
+ year = {2018},
+ howpublished = "URL \url{http://www.tcpdump.org/}"
+}
+
+@misc{i40e,
+ title = "{I40E} - Intel 40Gb/s Ethernet Network Adapter",
+ year = {2018},
+ howpublished = "URL \url{https://www.intel.com/content/www/us/en/products/network-io/ethernet/10-25-40-gigabit-adapters.html}"
+}
+
+@misc{virtio_ring,
+ author = "Michael Tsirkin",
+ year = {2017},
+ title = "packed ring layout proposal v2",
+ howpublished = "URL \url{https://lists.oasis-open.org/archives/virtio-dev/201702/msg00010.html}"
+}
+
+@misc{tsirkin_ring_optimization,
+ author = "Michael Tsirkin",
+ year = {2017},
+ title = "ptr\_ring: batch ring zeroing",
+ howpublished = "URL \url{https://lkml.org/lkml/2017/4/7/19}"
+}
+
+@misc{russel_vringfd,
+ author = "Rusty Russel",
+ year = {2008},
+ title = "vringfd()",
+ howpublished = "URL \url{https://lwn.net/Articles/276856/}"
+}
+
+@misc{xdp,
+ year = {2018},
+ title = "{XDP: eXpress Data Path}",
+ howpublished = "URL \url{https://www.iovisor.org/technology/xdp}"
+}
+
+@misc{af_xdp_patch,
+ author = "Magnus Karlsson and Bj{\"o}rn T{\"o}pel",
+ year = {2018},
+ title = "{The AF\_XDP patch set}",
+ howpublished = "URL \url{https://lwn.net/Articles/750293/}"
+}
+
+@misc{af_xdp_patch_zc,
+ author = "Magnus Karlsson and Bj{\"o}rn T{\"o}pel", 
+ year = {2018},
+ title = "{Zero-copy support for AF\_XDP}",
+ howpublished = "URL \url{https://lwn.net/Articles/756549/}"
+}
+
+@misc{af_xdp_patch_i40e,
+ author = "Magnus Karlsson and Bj{\"o}rn T{\"o}pel",
+ year = {2018},
+ title = "{AF\_XDP zero-copy support for I40E}",
+ howpublished = "URL \url{https://patchwork.ozlabs.org/cover/962906/}"
+}
+
+@misc{af_xdp_lwn,
+ author = "Jonathan Corbet",
+ year = {2018},
+ title = "{Accelerating networking with AF\_XDP}",
+ howpublished = "URL \url{https://lwn.net/Articles/750845/}"
+}
+
+@misc{retpoline,
+ author = "Paul Turner",
+ year = {2018},
+ title = "{Retpoline: a software construct for preventing branch-target-injection}",
+ howpublished = "URL \url{https://support.google.com/faqs/answer/7625886}"
+}
+
+@misc{jesper_xdp_perf_drop,
+ author = "Jesper {Dangaard Brouer}",
+ year = {2018},
+ title = "{XDP performance regression due to CONFIG\_RETPOLINE Spectre V2}",
+ howpublished = "URL \url{https://lkml.org/lkml/2018/4/12/285}",
+}
+
+@misc{jesper_batching,
+ author = "Jesper {Dangaard Brouer}",
+ year = {2018},
+ title = "{Focusing the XDP project}",
+ howpublished = "URL \url{https://lists.openwall.net/netdev/2017/02/20/29}",
+}
+
+@misc{fdio_one_tbits,
+ author = "Jeska Duman",
+ year = {2017},
+ title = "{FD.io Doubles Packet Throughput Performance to Terabit Levels}",
+ howpublished = "URL \url{https://fd.io/2017/07/fdio-doubles-packet-throughput-performance-terabit-levels/}",
+}
+
+@inproceedings{af_packet_v4,
+ author = "Karlsson, Magnus and T{\"o}pel, Bj{\"o}rn and Fastabend, John",
+ title = "{AF\_PACKET V4} and {PACKET\_ZEROCOPY}",
+ booktitle = "Netdev Conference 2.2",
+ year = {2017},
+ location = {Seoul, South Korea},
+ url = {https://www.netdevconf.org/2.2/papers/karlsson-afpacket-talk.pdf},
+}
+
+@inproceedings{busy_poll,
+ author = "Eric Dumazet",
+ title = "{BUSY POLLING}: past, present, future",
+ booktitle = "Netdev Conference 2.1",
+ year = {2017},
+ location = {Montreal, Canada},
+ url = {https://netdevconf.org/2.1/slides/apr6/dumazet-BUSY-POLLING-Netdev-2.1.pdf},
+}
+
+@misc{af_packet_performance,
+ author = "Pavel Odintsov",
+ title = "Capturing Packets in Linux at a Speed of Millions of Packets per Second without Using Third Party Libraries",
+ howpublished = "URL \url{https://kukuruku.co/post/capturing-packets-in-linux-at-a-speed-of-millions-of-packets-per-second-without-using-third-party-libraries/}",
+}
+
+@inproceedings{dpdk_pfring_netmap,
+ author = {Gallenm\"{u}ller, Sebastian and Emmerich, Paul and Wohlfart, Florian and Raumer, Daniel and Carle, Georg},
+ title = {Comparison of Frameworks for High-Performance Packet IO},
+ booktitle = {Proceedings of the Eleventh ACM/IEEE Symposium on Architectures for Networking and Communications Systems},
+ series = {ANCS '15},
+ year = {2015},
+ isbn = {978-1-4673-6632-8},
+ location = {Oakland, California, USA},
+ pages = {29--38},
+ publisher = {IEEE Computer Society},
+}
+
+@inproceedings {pfring,
+author = {Luca Deri},
+title = {Improving Passive Packet Capture: Beyond Device Polling},
+booktitle = {International System Administration and Network Engineering Conference (SANE)},
+year = {2004},
+address = {Amsterdam, The Netherlands},
+}
+
+@inproceedings {netmap,
+author = {Luigi Rizzo},
+title = {netmap: A Novel Framework for Fast Packet I/O},
+booktitle = {2012 {USENIX} Annual Technical Conference ({USENIX} {ATC} 12)},
+year = {2012},
+isbn = {978-931971-93-5},
+address = {Boston, MA},
+pages = {101--112},
+url = {https://www.usenix.org/conference/atc12/technical-sessions/presentation/rizzo},
+publisher = {{USENIX} Association},
+}

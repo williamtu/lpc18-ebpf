@@ -853,7 +853,7 @@ TX ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
            -------------------
 COMPL q  ...|   |   |   |   | ...
            -------------------
-(3) Issue send syscall to eth2's XSK
+(3) Issue sendmsg syscall to eth2's XSK
 (4) Packet transmission is completed
            -------------------        eth2 UMEM freelist
 TX ring  ...|   |   |   |   | ...       {1, 2, 3, 8}
@@ -890,8 +890,8 @@ To send to eth2 using eth2's XSK, ovs-vswitchd first gets four packet buffers,
 \{4, 5, 6, 7\} from eth2's UMEM freelist and copies the packet data from eth1's UMEM
 to eth2's \{4, 5, 6, 7\}.  Then TX descriptors for the four packets are
 created and placed into eth2's TX ring (step 2).
-At step 3, send syscall is issued to signal the kernel to start transmit.
-As the send in XSK is asynchronous and send syscall only returns zero when
+At step 3, sendmsg syscall is issued to signal the kernel to start transmit.
+As the send in XSK is asynchronos and sendmsg syscall only return return zero when
 no error, ovs-vswitch polls the COMPLETION ring to make sure these four
 packets have been sent out (step 4).
 Once the four packets' descriptors show up at the COMPLETION ring, at step 5,
@@ -910,7 +910,8 @@ the AF\_XDP mode.
 We installed OVS-AFXDP on the target server, and used the source server to
 generates 64-byte single UDP flow packets
 at the rate of 19~Mpps using the DPDK library.
-On the target server, we also disable the Intel spectre and meltdown fixes.
+On the target server, for demonstrating the best performance,
+we disabled the Intel Spectre and Meltdown fixes~\cite{jesper_xdp_perf_drop, retpoline}.
 
 For all our experiments, we fuse a microbenchmark program, called xdpsock,
 as the baseline to compare with OVS-AFXDP implementation.
@@ -1036,12 +1037,12 @@ We found that the OVS pmd thread under rxdrop
 has much fewer context switches compared to the l2fwd, indicating that
 the pmd process spends much more time in kernel space than in userspace.
 By using strace, we saw that the OVS-AFXDP l2fwd experiement calls sendto system call
-at very high frequency, because from Figure~\ref{afxdptx}, we design to check
-the success of send (step 4) immediately after issuing send (step 3).
-We change the design by calling send syscall (step 3) only when TX ring is
-close to full, e.g., when 3/4 ring elements have been used.
-In specific case, instead of issuing send syscall for a batch of 32 packets
-and keeping polling to check transmission is done, we only issue send when there are 512 outstanding
+at very high frequeuce, because from Figure~\ref{afxdptx}, we design to check
+the success of send (step 4) immediately after issusing send (step 3).
+We change the design by calling sendmsg syscall (step 3) only when TX ring is
+closed to full, e.g., when 3/4 ring elements have been used.
+In specific case, instead of issuing sendmsg syscall for a batch of 32 packets
+and making sure they are done, we only issue send when there are 512 outstanding
 packets.  With this change, the OVS-AFXDP l2fwd experiment shows around $14Mpps$.
 
 \subsubsection{Summary}
@@ -1049,7 +1050,7 @@ Through the step-by-step analysis, the key to performance is to keep
 the process CPU time in userspace, and making sure the userspace process
 is dedicated to do packet processing. Moreover, standard optmization
 techniques such as batching is critical. Here we apply batching in a
-couple of places such as issuing send syscall, packet reception and
+couple of places such as issuing sendmsg syscall, packet reception and
 transmission. In summary, OVS-AFXDP shows performance below:
 \begin{table}
 \centering
