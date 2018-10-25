@@ -988,33 +988,37 @@ Currently, each round of receive polling processes a batch up to 32 packets.
 
 \subsubsection{Memory Management and Locks}\label{memorym}
 For every stage of optimizations, we use Linux perf extensively, e.g., perf stat
-and perf record/report.  With the above new design, we observe the new bottleneck
-is at the umempool APIs we introduce, as well as at the
-packet metadata allocation, struct dp\_packet, for every received packet.
-We introduce two major APIs, umem\_elem\_get(), which gets N free element from the
-umempool, and umem\_elem\_put(), which places back the free umem buffer to
-the umempool, similar to the concept of producer (put) and consumer (get).
-We implemented three different data structures of umempool as below
-to compare their performance.
+and perf record/report.  With the above PMD netdev optimization, we observe the
+new bottleneck is the umempool APIs that we introduced.
+We introduce two major umempool APIs, umem\_elem\_get(), which gets N free
+element from the umempool, and umem\_elem\_put(), which places back the free
+umem buffer to the umempool. We implement three different data structures for
+umempool management as below.
 \begin{itemize}
-\item FILO-list\_head: We reversed first 8-byte of the umem buffer as a next pointer,
-pointing to the next available element in umempool, and implement FIFO access get/set
-APIs. The list\_head pointer always points to the first available umem element.
-\item FIFO-ptr\_ring: Similar to Linux kernel's ptr\_ring, an array of elements are
-allocated in continuous memory region.
-Consumer takes elements from the tail pointer and when placing back, producer, puts
-them into where head pointer points to.
-\item FILO-ptr\_array: Similar to Linux kernel's skb\_array~\cite{skbarray},
-an array of elements are allocated
-in continuous memory region, but both consumer and producer take elements
-from beginning of the array.
+\item LIFO-list\_head: We reverse the first 8-byte of a umem chunk as a next
+pointer that pointing to the next available element in umempool, and implement
+LIFO (last in, first out) access get/put APIs. In this design, we maintain the
+list\_head pointer that always points to the first available umem element,
+and we get and put elements from list\_head.
+\item FIFO-ptr\_ring: This design maintains an extra FIFO (first in, first out)
+pointer ring that is similar to Linux kernel's ptr\_ring. The ring is an array
+of elements that allocated in a continuous memory region, where each element
+points to an available umem chunk. We keep track of head and tail pointer for
+the FIFO-ptr\_ring. The consumer gets elements from the tail pointer,
+and then the producer puts elements back to where head pointer points to.
+\item LIFO-ptr\_array: This design is similar to Linux kernel's
+skb\_array~\cite{skbarray} where an array of pointers are allocated
+in contiguous memory region. Each element in the array points to an available
+memory chunk in umem.  We keep track of a head pointer to the array,
+and both consumer and producer get/put elements from the head pointer.
 \end{itemize}
 
-Although we allocate one umem per netdev, there might be multiple queues per
-netdev sharing the same umem. As a result, the above three data structures
-require a mutex lock before accessing umem freelist. Linux perf reports
-pthread mutex lock related APIs as ones of the top CPU utilization functions.
-We change our design by 1) allocating per-queue umem region and 2)
+Initially, we allocate one umem per netdev. Since there might be multiple
+queues per netdev sharing the same umem, the above three data structures
+require a mutex lock to protect umempool accessing. In this design, Linux
+perf reports pthread mutex lock related APIs as one of the top CPU
+utilization function.
+We then change our design by 1) allocating per-queue umem region and 2)
 allocating one PMD thread per queue. As a result, no lock is needed because
 each queue has only one thread and its own set of umem elements.
 
@@ -1022,15 +1026,16 @@ each queue has only one thread and its own set of umem elements.
 Moving forward, Linux perf shows that the packet metadata allocation
 takes a lot of CPU cycles, i.e.,  dp\_packet\_init(), dp\_packet\_set\_data().
 So instead of allocating packet metadata at packet reception time, we pre-allocate
-the packet metadata and implement two data structures to compare their performances:
+the packet metadata and implement two data structures to compare their performance:
 \begin{itemize}
-\item Embedding in packet buffer: Since we already allocate 2K chunk for each
-umem packet buffer, we reserve the first 256-byte in each umem element as struct dp\_packet
-and initialize the dp\_packet as much as we can at allocation time.
+\item Embedding in packet buffer: As we already allocate 2KB chunk for each
+umem packet buffer, we reserve the first 256-byte in each umem chunk as struct dp\_packet
+and initialize the dp\_packet's packet independent fields  at allocation time.
 This is similar to the DPDK mbuf design~\cite{dpdkmbuf}, where a single memory buffer
 is used for both packet data and metadata.
-\item Separate from packet buffer: This design simply allocates a continuous memory region
-storing an array of packet metadata, and initialize them as much as we can.
+\item Separate from packet buffer: This design allocates a contiguous memory
+region storing an array of packet metadata, and initialize their packet
+independent fields.
 \end{itemize}
 
 %complete separation of the allocation of metadata structures from the allocation of packet data buffers.
@@ -1038,30 +1043,35 @@ storing an array of packet metadata, and initialize them as much as we can.
 %Embed metadata within a single memory buffer the structure followed by a fixed size area for
 % the packet data.
 
-With the above design change, we found that using the FILO-ptr\_array in section~\ref{memorym} with
-separate from packet buffer design yields the best performance. Largely due to both data structures
-have better spatial locality and more batching friendly, when all data are allocated together.
-For example, setting up 32 packet metadatas in an array definitely incurs
-less cache misses than setting up in 32 elements in umem.
-And getting 32 free umem elements from ptr\_array has similar benefits.
-With the above decision, the OVS rxdrop shows around $19Mpps$, closed
-to the baseline xdpsock rxdrop performance.
+With the above design change, we find that using the LIFO-ptr\_array in
+Section~\ref{memorym} with separated packet metadata allocation yields the
+best performance. It is because both data structures have better spatial
+locality and there are more batching friendly.
+For example, accessing 32 packet metadata in an array incurs less cache
+misses than accessing the packet metadata 32 umem chunks.
+The ptr\_array for umempool management outperforms the other two designs
+for the similar reason. With the above design decisions, the OVS rxdrop
+can achieve similar performance as the baseline xdpsock rxdrop at around
+$19Mpps$.
 
 \subsubsection{Batching Send Syscall}
 %574.790 M/sec  
-We continued measuring the performance of OVS-AFXDP l2fwd and
-observed only $4Mpps$, compared to $17Mpps$ baseline xdpsock-l2fwd.
-We found that the OVS PMD thread under rxdrop
-has much fewer context switches compared to the l2fwd, indicating that
+With all the aforementioned optimizations, We continue measuring the
+performance of OVS-AFXDP l2fwd and observe only $4Mpps$, compared to
+$17Mpps$ baseline xdpsock-l2fwd.
+We find that the OVS PMD thread under rxdrop has much fewer context
+switches compared to the l2fwd, indicating that
 the PMD process spends much more time in kernel space than in userspace.
-By using strace, we saw that the OVS-AFXDP l2fwd experiement calls sendto system call
-at very high frequeuce, because from Figure~\ref{afxdptx}, we design to check
-the success of send (step 4) immediately after issusing send (step 3).
-We change the design by calling sendmsg syscall (step 3) only when TX ring is
-closed to full, e.g., when 3/4 ring elements have been used.
-In specific case, instead of issuing sendmsg syscall for a batch of 32 packets
-and making sure they are done, we only issue send when there are 512 outstanding
-packets.  With this change, the OVS-AFXDP l2fwd experiment shows around $14Mpps$.
+By using strace, we find that the OVS-AFXDP l2fwd experiment calls sendto
+system call at very high rate. It is because we design to check the
+completion of send immediately after issusing send as shown in step 3 and
+4 in Figure~\ref{afxdptx}.
+We modify the design by calling sendmsg syscall (step 3) only when TX ring is
+close to full, e.g., when 3/4 ring elements have been used.
+For example, instead of issuing sendmsg syscall for a batch of 32 packets
+and making sure they are finished, we only issue send when there are 512
+outstanding packets.  With this change, the OVS-AFXDP l2fwd experiment
+can achieve around $14Mpps$.
 
 \subsubsection{Summary}
 Through the step-by-step analysis, the key to performance is to keep
