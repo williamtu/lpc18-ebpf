@@ -80,8 +80,8 @@ aforementioned technologies and present the performance numbers in this paper.
 eBPF, extended Berkeley Packet Filter, enables userspace applications to
 customize and extend the Linux kernel's functionality. It provides
 flexible platform abstractions for network functions, and is being ported
-to a variety of platforms. In Linux kernel, users can attach eBPF programs
-to TC and XDP hook point as shown in Fig~\ref{ebpf-hook}. Based on this
+to a variety of platforms. In the Linux kernel, users can attach eBPF programs
+to TC and XDP hook points as shown in Fig~\ref{ebpf-hook}. Based on this
 design, we explore the possibilities of utilizing eBPF to implement OVS
 datapath in threefold:
 1) in-kernel flow processing by attaching eBPF programs to TC,
@@ -126,7 +126,7 @@ We work around a couple of eBPF limitations, for example, the lack of TLV
 a fixed-length array; without a dedicated way to execute a packet, we
 create a dedicated device that attached a eBPF program to handle packet
 execute logic for userspace to kernel packet transmission.
-Currently, OVS-eBPF can satisfy most of the basic feature for flow processing
+Currently, OVS-eBPF can satisfy most of the basic features for flow processing
 and tunneling protocol support, and we are investigating more complicated
 features such as connection tracking, NAT, (de)fragmentation, and ALG.
 
@@ -138,15 +138,14 @@ to XDP. However, the fact that XDP has fewer helper function support implies
 that either 1) only very limited number of flows are eligible for offload,
 or 2) more flow processing logic needed to be implemented in native eBPF code.
 For example, it is more difficult for OVS datapath to provide tunnel support in
-XDP, since lightweight tunnel kernel helpers is not available.
- 
+XDP, since lightweight tunnel kernel helpers are not available.
+
 XDP provides another way for interacting with userspace programs, called AF\_XDP. 
 AF\_XDP is a socket interface for control plane and a shared memory API for
-accessing packets from userspace application. With AF\_XDP, OVS-AFXDP project
-redirect packets to userspace, and processes the packets by OVS's full-fledged
+accessing packets from userspace application. Using AF\_XDP, the OVS-AFXDP project
+redirect packets to userspace, and processes the packets using OVS's full-fledged
 userspace datapath implementation, dpif-netdev. In this approach, OVS-AFXDP
-project treats the AF\_XDP as a fast packet-I/O channel, and move most of
-the flow processing into the userspace OVS.
+project treats the AF\_XDP as a fast packet-I/O channel.
 
 This paper focuses on the OVS-eBPF and OVS-AFXDP projects.
 A rough comparison of the two project is shown in Table~\ref{proj-compare}.
