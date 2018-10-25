@@ -59,7 +59,7 @@
 \begin{abstract}
 eBPF is an emerging technology in Linux kernel with the goal of making Linux kernel
 extensible by providing an eBPF virtual machine with safety guarantee.
-Open vSwitch, OVS, is a software switch running majorly in Linux
+Open vSwitch (OVS), is a software switch running majorly in Linux
 operating systems, its fast path packet process is implemented in Linux kernel
 module, openvswitch.ko.
 To provide greater flexibility and extensibility to OVS datapath, in this
@@ -68,11 +68,11 @@ development with two projects: the OVS-eBPF project and the OVS-AFXDP project.
 The goal of OVS-eBPF project is to re-write existing flow processing features
 in openvswitch kernel datapath into eBPF program, and attaching it
 to Linux TC.
-On the other hand, the OVS-AFXDP project aims to by-passing the kernel
-using AF\_XDP socket and moves most of the flow processing features
+On the other hand, the OVS-AFXDP project aims to by-pass the kernel
+using an AF\_XDP socket and moves most of the flow processing features
 into userspace.
 We demonstrate the feasibility of implementing OVS datapath with the
-aforementioned technologies and present the performance number in this paper.
+aforementioned technologies and present the performance numbers in this paper.
 \end{abstract}
 
 \section{Introduction}\label{introduction}
