@@ -2,8 +2,12 @@ TEXFILES = paper.tex
 FIGURES = 
 GRAPHS =
 
+all: open
+
 paper.pdf: $(FIGURES) $(TEXFILES) $(GRAPHS) paper.bib
 	texi2pdf paper.tex
+
+open: paper.pdf
 	xdg-open paper.pdf
 
 clean: clean-graphs clean-figures
