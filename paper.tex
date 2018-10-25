@@ -351,7 +351,7 @@ buffer as parameter, XSK introduces two rings in userspace: the Rx ring and the
 Tx ring. These two rings are per-XSK data structure that the userspace program
 needs to properly configure and maintain in order to receive and send packets.
 Moreover, to provide zerocopy support for AF\_XDP, all the packet data buffers
-used in Tx/Rx rings are allocated from a specific memory region called \em{umem}
+used in Tx/Rx rings are allocated from a specific memory region called {\em umem}
 which consists of a number of fixed size memory chunks.
 Two rings, the Fill ring and the Completion ring, are associated with a umem,
 and a umem can be shared between multiple XSKs.
@@ -776,12 +776,15 @@ unload the eBPF program and map.
 \subsection{umem memory management}
 In order to properly program Rx/Tx/Fill/Completion rings, we implement a
 umem memory management layer, call umempool. Basically, it's a data structure
-maintaining the unused/available elements in umem, and GET and PUT access APIs.
+maintaining the unused/available elements in umem with GET and PUT access
+APIs. We will demonstrate the use case of umempool with packet reception and
+transmission in the following subsections.
+
 \subsubsection{Packet Reception}
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
-umem: total 8 elements, each has 2K chunk size
+umem: total 8 elements, each has 2KB chunk size
                  +-------------------------------+
                  |   |   |   |   |   |   |   |   |
                  +-------------------------------+
@@ -827,14 +830,15 @@ processing incoming AF\_XDP packets.}
 \end{figure}
 
 Figure~\ref{afxdprx} shows how ovs-vswitchd sets up the Fill ring and
-the Rx ring for receving packets from XSK.  For simplicity to demonstrate
-how AF\_XDP works, assume that there are only eight umem buffers, with each buffer's
-size equals 2KB (?).  Initially at step 1, ovs-vswitchd fills four available umem elements into
+the Rx ring for receiving packets from XSK.  For simplicity, in this example,
+we assume that there are only eight umem buffers, and each buffer's
+size is 2KB.  Initially, at step 1, ovs-vswitchd pushes four available umem
+elements into
 the Fill ring and waits for incoming packets.  When there are incoming packets,
-at step 2, the Fill ring's four buffer elems have been consumed and moved
+at step 2, the Fill ring's four buffer elements have been consumed and moved
 to the Rx ring.  In order to keep receiving packets, ovs-vswitchd gets another
 four available umem elements from the umempool, and fills into Fill ring (step 3).
-Then ovs-vswitchd creates the metadata needed for the four packet
+Then, ovs-vswitchd creates the metadata needed for the four packet
 buffer \{1, 2, 3, 4\}, i.e., struct dp\_packet and struct dp\_packet\_batch, and passes to 
 the dpif-netdev layer for parse, lookup and action executions.
 Finally, when ovs-vswitchd finishes processing the umem buffer, a recycle
