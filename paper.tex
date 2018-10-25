@@ -859,9 +859,8 @@ new packets.
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
- OVS dpif-netdev has 4 packets at umem:{1, 2, 3, 4} received
- from eth1 and plan to send to eth2.
-(1) Get 4 free elements from eth2's umem, copy packet data to it
+ OVS sending 4 packets recevied from eth1 to eth2 by XSK.
+(1) Get 4 free elements from eth2's umempool, copy packet data to them
 (2) Create TX descriptors and place into Tx ring
            -------------------        eth2 umempool
 Tx ring  ...| 4 | 5 | 6 | 7 | ...       {1, 2, 3, 8}
@@ -884,36 +883,36 @@ Tx ring  ...|   |   |   |   | ...       {1, 2, 3, 4,
            -------------------
 Compl r  ...|   |   |   |   | ...
            -------------------
-(6) Recycle {1, 2, 3, 4} to eth1's umem 
+(6) Recycle the 4 packet buffers back to eth1's umempool
 \end{verbatim}
 }
 \vspace{-1.0em}
 \caption{An example of how OVS programs the COMPLETION ring and Tx ring when
-processing incoming AF\_XDP packets from one netdev and sending to another netdev.}
+processing incoming AF\_XDP packets from one netdev and sending them to another
+netdev.}
 \label{afxdptx}
 \vspace{-1.0em}
 \end{figure}
 
 Figure~\ref{afxdptx} shows the process for sending packets to the XSK.
-Assuming that ovs-vswitch has one bridge and two ports: eth1 and eth2.
-And there is a flow entry showing
-\texttt{in\_port=eth1, ..., actions=..., output:eth2}, meaning to forward
+In this example, there is one bridge and two ports, eth1 and eth2, in OVS.
+Both ports are configured with AF\_XDP support, and there is a flow,
+\texttt{in\_port=eth1, actions=output:eth2} that forwards
 packets received from eth1 to eth2.
-And both eth1 and eth2 are configured with AF\_XDP support.
 
-Initially, assume ovs-vswitchd receives four packets \{1, 2, 3, 4\} from eth1's XSK
-To send to eth2 using eth2's XSK, ovs-vswitchd first gets four packet buffers,
+Initially, assume ovs-vswitchd receives four packets from eth1's XSK.
+To send packets to eth2 using eth2's XSK, ovs-vswitchd first gets four packet buffers,
 \{4, 5, 6, 7\} from eth2's umempool and copies the packet data from eth1's umem
-to eth2's \{4, 5, 6, 7\}.  Then TX descriptors for the four packets are
+to eth2's umem at \{4, 5, 6, 7\}.  Later on, TX descriptors for the four packets are
 created and placed into eth2's Tx ring (step 2).
-At step 3, sendmsg syscall is issued to signal the kernel to start transmit.
-As the send in XSK is asynchronos and sendmsg syscall only return return zero when
-no error, ovs-vswitch polls the COMPLETION ring to make sure these four
-packets have been sent out (step 4).
+At step 3, sendmsg syscall is issued to signal the kernel to start the transmission.
+As the send msg syscall in XSK is asynchronous, ovs-vswitchd needs to poll
+the COMPLETION ring to make sure that these four packets have been sent out
+(step 4).
 Once the four packets' descriptors show up at the COMPLETION ring, at step 5,
 ovs-vswitchd recycles their umem elements back to eth2's umempool.
-In addition, the original four packet buffers from eth1, \{1, 2, 3, 4\}, are
-also recycled back to eth1's umempool.
+The original four packet buffers from eth1 are recycled back to eth1's
+umempool as well.
 
 \subsection{Performance Evaluation}
 All of our performance results use a hardware test bed consisting of
