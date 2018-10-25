@@ -914,27 +914,30 @@ ovs-vswitchd recycles their umem elements back to eth2's umempool.
 The original four packet buffers from eth1 are recycled back to eth1's
 umempool as well.
 
-\subsection{Performance Evaluation}
-All of our performance results use a hardware test bed consisting of
+\subsection{Performance Evaluation and Optimization}
+All of our performance evaluation are conducted on a test bed consisting of
 two Intel Xeon E5 2440 v2 1.9GHz servers, each with 1 CPU socket and
 8 physical cores with hyperthreading enabled.
-One server, the target server, has an Intel 40GbE XL710 single port NIC,
-and the other server, the source server, has a Netronome NFP-4000 40GbE device.
-The target server runs Linux kernel 4.19-rc4, with i40e driver supporting
+The first server, the source server, is served as a traffic generator.
+It is equipped with a Netronome NFP-4000 40GbE device, and runs a customized
+traffic generator that generates 64-byte single UDP flow packets
+at the rate of $19Mpps$ using the DPDK library.
+The second server, the target server, is equipped with an Intel 40GbE XL710
+single port NIC, and it runs Linux kernel 4.19-rc4 with i40e driver supporting
 the AF\_XDP zero copy mode~\cite{af_xdp_patch_i40e, af_xdp_patch_zc}.
-We installed OVS-AFXDP on the target server, and used the source server to
-generates 64-byte single UDP flow packets
-at the rate of 19~Mpps using the DPDK library.
-On the target server, for demonstrating the best performance,
-we disabled the Intel Spectre and Meltdown fixes~\cite{jesper_xdp_perf_drop, retpoline}.
+We install OVS-AFXDP on the target server, and
+we disable the Intel Spectre and Meltdown fixes~\cite{jesper_xdp_perf_drop, retpoline}
+for demonstrating the best performance. In addition, we enable 1GB huge
+memory page support to reduce the page fault overhead.
 
 For all our experiments, we use a microbenchmark program, called xdpsock,
 as the baseline to compare with OVS-AFXDP implementation.
-xdpsock is an AF\_XDP sample program doing no packet processing, and can be configured
-to do simply dropping all packets, rxdrop, or forwarding the packet to the same port as
-it receives, l2fwd.
-In our testbed, we measured $19Mpps$ for xdpsock-rxdrop and $17Mpps$ for xdpsock-l2fwd.
-For OVS-AFXDP, we conduct similar two experiments, but with OVS's OpenFlow rule installed as
+xdpsock is an AF\_XDP sample program that can be configured into two modes.
+In the rxdrop mode, xdpsock simply drops all incoming packets without any
+packet processing. In the l2fwd mode, xdpsock forwards the packet to the
+same port from where it is received.
+In our testbed, we measure $19Mpps$ for xdpsock-rxdrop and $17Mpps$ for xdpsock-l2fwd.
+For OVS-AFXDP, we conduct two similar experiments, with OVS's OpenFlow rule installed as
 below:
 \begin{itemize}
 \item OVS-AFXDP rxdrop: Install a single OpenFlow rule to drop every packets,
@@ -943,18 +946,22 @@ e.g.,  \texttt{in\_port=eth1, actions=drop}.
 as it receives, e.g., \texttt{in\_port=eth1, actions=set\_fields:eth2->in\_port, output:eth1}.
 \end{itemize}
 
-Additionally, AF\_XDP provides three operation modes, from slowest to fastest:
-skb mode: works on devices using generic XDP~\cite{genericxdp},
-driver mode: works on devices with XDP support, and
-zero-copy driver mode: works on devices with XDP\_XDP zerocopy support.
-For all our experiments, we use the zero-copy driver mode for showing the best performance.
+AF\_XDP can provide the following three operation modes depending on the device
+and driver support. We list the three mode from the slowest to the fastest
+throughput.
+1) skb mode: works on devices using generic XDP~\cite{genericxdp},
+2) driver mode: works on devices with XDP support, and
+3) zero-copy driver mode: works on devices with XDP\_XDP zerocopy support.
+For all our experiments, we use the zero-copy driver mode since it provides the
+best performance.
 
 \subsubsection{PMD netdev}
-Our initial prototype shows pretty terrible performance, only $0.5Mpps$ for rxdrop.
-We observe that when dropping/forwarding packets under OVS-AFXDP, two CPUs show up
-100\% utilitization:
+In the beginning, our initial prototype of OVS-AFXDP only provides $0.5Mpps$
+throughput for rxdrop.
+We observe that when dropping/forwarding packets under OVS-AFXDP, two processes
+below can easily reach 100\% CPU utilization:
 \begin{itemize}
-\item ovs-vswitchd: This is the process keeps doing the send and receive steps
+\item ovs-vswitchd: This is the process that keeps doing the send and receive steps
 in Figure~\ref{afxdprx} and~\ref{afxdptx}.
 \item ksoftirqd/core\_id: This is the kernel software interrupt thread handling the
 incoming packets, triggering XDP program to pass packets to the XSK, and also
@@ -962,24 +969,22 @@ processing transmission.
 \end{itemize}
 \mycomment{Compared to xdpsock, ovs-vswitchd adds on top of it a umempool,
 and packets parsing, lookup and action execution.}
-We investigate using Linux perf and our first fix is to enable OVS's PMD-mode,
-Poll-Mode-Driver, to the afxdp netdev.
+With further investigation using Linux perf tools, our first improvement is to
+to enable OVS's Poll-Mode-Driver (PMD) mode to the afxdp netdev.
 
-In OVS, a non-pmd mode netdev does packet receiption by putting all the receiving
-netdev's file descriptors, fds, together and ovs-vswitchd polls them when there is an fd
-ready to perform I/O.  As a result, the fd of the XSK is {\em shared} with other fds, and
-we observed that the poll system call has pretty high overhead.
+In OVS's non-PMD mode, ovs-vswitchd does packet reception by putting all the
+receiving netdev's file descriptors (fd)s together and invokes the poll system
+call to determine if any one of the fd is ready to perform I/O.  As a result,
+the polling of XSK's fd  is {\em shared} with other fds, and
+we observed that the poll system call incurs high overhead.
 
 Applying OVS's PMD netdev avoids these problems and improves the rxdrop performance
-from $0.5Mpss$ to $3Mpps$.  Ideally, receiving packets from XSK should not need to context
-switch into kernel as mentioned in steps~\ref{afxdprx}. So an ideal implementation
-should show minimal context switches with most of the CPU time stays in userspace. 
-When enabling PMD netdev for afxdp, ovs-vswitch can be
-configured to create a {\em dedicated} thread for the packet processing.
-In OVS-AFXDP, we create a thread for each XSK's receive queue and the thread keeps polling
-the RX ring for new packets.  Each round of receive polling processes a batch of
-packets, up to a maximum of 32 packets. In addition, we enable 1GB huge memory page support
-to reduce the page fault overhead.
+from $0.5Mpss$ to $3Mpps$. This performance gain is because of reducing userspace
+and kernel space context switch overhead by omitting poll system call.
+That is instead of using poll system call, we implement packet reception by using
+PMD netdev for AFXDP, so that ovs-vswitchd allocate a dedicated thread for each
+XSK's receive queue and the thread keeps polling the RX ring for new packets.
+Currently, each round of receive polling processes a batch up to 32 packets.
 
 \subsubsection{Memory Management and Locks}\label{memorym}
 For every stage of optimizations, we use Linux perf extensively, e.g., perf stat
@@ -1010,7 +1015,7 @@ netdev sharing the same umem. As a result, the above three data structures
 require a mutex lock before accessing umem freelist. Linux perf reports
 pthread mutex lock related APIs as ones of the top CPU utilization functions.
 We change our design by 1) allocating per-queue umem region and 2)
-allocating one pmd thread per queue. As a result, no lock is needed because
+allocating one PMD thread per queue. As a result, no lock is needed because
 each queue has only one thread and its own set of umem elements.
 
 \subsubsection{Metadata Allocation}
@@ -1046,9 +1051,9 @@ to the baseline xdpsock rxdrop performance.
 %574.790 M/sec  
 We continued measuring the performance of OVS-AFXDP l2fwd and
 observed only $4Mpps$, compared to $17Mpps$ baseline xdpsock-l2fwd.
-We found that the OVS pmd thread under rxdrop
+We found that the OVS PMD thread under rxdrop
 has much fewer context switches compared to the l2fwd, indicating that
-the pmd process spends much more time in kernel space than in userspace.
+the PMD process spends much more time in kernel space than in userspace.
 By using strace, we saw that the OVS-AFXDP l2fwd experiement calls sendto system call
 at very high frequeuce, because from Figure~\ref{afxdptx}, we design to check
 the success of send (step 4) immediately after issusing send (step 3).
