@@ -1074,12 +1074,13 @@ outstanding packets.  With this change, the OVS-AFXDP l2fwd experiment
 can achieve around $14Mpps$.
 
 \subsubsection{Summary}
-Through the step-by-step analysis, the key to performance is to keep
-the process CPU time in userspace, and making sure the userspace process
-is dedicated to do packet processing. Moreover, standard optmization
-techniques such as batching is critical. Here we apply batching in a
-couple of places such as issuing sendmsg syscall, packet reception and
-transmission. In summary, OVS-AFXDP shows performance below:
+We summarize the OVS-AFXDP in Table~\ref{compare}.
+Through the step-by-step analysis, the keys to performance improvement are to
+keep packet processing in userspace to avoid kernel userspace context switch,
+and allocating dedicated userspace processes for packet processing.
+Moreover, standard optimization techniques such as batching is critical
+to performance. We observe performance boost when apply batching to a couple
+of places such as issuing sendmsg syscall, packet reception and transmission.
 \begin{table}
 \centering
 \small
@@ -1090,7 +1091,7 @@ transmission. In summary, OVS-AFXDP shows performance below:
   l2fwd  & 17Mpps & 14Mpps \\ \hline
   \end{tabular}
 \caption{\footnotesize
-Performance comparison of the xdpsock and and OVS-AFXDP.
+Performance comparison of the xdpsock and OVS-AFXDP.
 }
 \label{compare}
 \end{table}
