@@ -154,14 +154,14 @@ userspace datapath implementation, dpif-netdev. In this approach, OVS-AFXDP
 project treats the AF\_XDP as a fast packet-I/O channel.
 
 This paper focuses on the OVS-eBPF and OVS-AFXDP projects.
-A rough comparison of the two project is shown in Table~\ref{proj-compare}.
+%A rough comparison of the two project is shown in Table~\ref{proj-compare}.
 The remainder of this paper is organized as follows:
 In Section~\ref{sec:background}, we first provide some background information
 on eBPF, XDP, and AF\_XDP.  We then present the design, implementation, and
 evaluation of the OVS-eBPF and OVS-AFXDP projects in Section~\ref{sec:ebpf}
 and Section~\ref{sec:af_xdp} respectively. Finally,
 Section~\ref{sec:conclusion} concludes the paper and discusses the future work.
-
+\mycomment{
 \begin{table}
 \centering
 \scriptsize
@@ -179,7 +179,7 @@ Comparison of the OVS-eBPF project and OVS-AFXDP project.
 }
 \label{proj-compare}
 \end{table}
-
+}
 \section{Background}
 \label{sec:background}
 
@@ -723,7 +723,7 @@ action executed before forwarding the packet to another port.}
 OVS provides a userspace datapath interface (dpif) implementation, called
 dpif-netdev. The dpif-netdev userspace datapath receives and transmits
 packets from its userspace interface.  One major use case of dpif-netdev
-is OVS-DPDK~\cite{ovsdpdk}, where the packet reception and transmission
+is OVS-DPDK, where the packet reception and transmission
 are all conducted in DPDK's userspace
 library. The dpif-netdev is designed to be agnostic to how the network
 device accessing the packets, by an abstraction layer called netdev.
