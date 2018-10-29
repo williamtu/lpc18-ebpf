@@ -412,7 +412,7 @@ for sharing between different eBPF programs and \verb+ovs-vswitchd+.
 The OVS datapath requires the following eBPF maps:
 \begin{itemize}
 \item Flow key. This is the internal representation of the protocol headers
-    and metadata for the current packet being processed, defined in the P4~\cite{p4} language.
+    and metadata for the current packet being processed.
 \item Flow Table. This is a hash table whose key is the 32-bit hash value
 of the flow key, from both packet and its metadata,
 and value equals an array of actions to execute upon the flow.
@@ -653,8 +653,7 @@ altering packet data, specifically to modify the destination MAC address. In
 this case, the deparser writes stored metadata from actions processing back to
 the packet. The performance in this experiment drops to $0.84$ Mpps. The drop
 of $0.28$ Mpps from baseline is the result of the deparser writing all known
-packet header metadata back to the packet, and due to extraneous memory copies
-introduced by the P4-to-eBPF compiler. With a more intelligent deparser
+packet header metadata back to the packet. With a more intelligent deparser
 implementation, and by using recent improvements to the eBPF
 API~\cite{dpa1,dpa2}, the performance gap compared with the native kernel
 implementation is expected to shrink.
