@@ -124,17 +124,17 @@ and 3) moving the flow processing to userspace by using AF\_XDP.
 \vspace{-1.0em}
 \end{figure}
 
-Firstly, in OVS-eBPF project, we attach flow processing eBPF programs to TC.
-We start with the most aggressive goal that we plan to re-implement the entire
-features of OVS kernel datapath under net/openvswitch/* into eBPF code.
-We work around a couple of eBPF limitations, for example, the lack of TLV
-(Type-Length-Value) support leads us to redefine a binary kernel-user API using
-a fixed-length array; without a dedicated way to execute a packet, we
-create a dedicated device that attached a eBPF program to handle packet
-execute logic for userspace to kernel packet transmission.
-Currently, OVS-eBPF can satisfy most of the basic features for flow processing
-and tunneling protocol support, and we are investigating more complicated
-features such as connection tracking, NAT, (de)fragmentation, and ALG.
+Firstly, in OVS-eBPF project~\cite{extensible_ovs}, we attach flow processing
+eBPF programs to TC. We start with the most aggressive goal that we plan to
+re-implement the entire features of OVS kernel datapath under net/openvswitch/*
+into eBPF code. We work around a couple of eBPF limitations, for example, the
+lack of TLV (Type-Length-Value) support leads us to redefine a binary
+kernel-user API using a fixed-length array; without a dedicated way to execute
+a packet, we create a dedicated device that attached a eBPF program to handle
+packet execute logic for userspace to kernel packet transmission. Currently,
+OVS-eBPF can satisfy most of the basic features for flow processing and
+tunneling protocol support, and we are investigating more complicated features
+such as connection tracking, NAT, (de)fragmentation, and ALG.
 
 We can attach eBPF programs one layer below TC to XDP (eXpress Data Path).
 It is a much faster layer for packet processing, but there is almost no extra
