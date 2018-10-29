@@ -1103,6 +1103,42 @@ making the patch upstream to the OVS code base for more people to use.
 \label{sec:conclusion}
 This paper describes two eBPF projects related to OVS: OVS-eBPF and OVS-AFXDP.
 
+The eBPF project originally had the ambitious goal of replacing the fixed
+kernel datapath with a dynamic datapath that may be injected on demand, while
+keeping the design and operation essentially the same. This would solve
+distribution and maintenance issues, as the version of the datapath would be
+distributed with the OVS userspace package; furthermore, it would outline a
+path to allow OVS to continue to process packets in the kernel without the use
+of an OVS-specific kernel module, acheiving the goals of other recent
+work~\cite{ovs_tc}. Collectively, this would allow the datapath logic to be
+extended and modified more easily, while reducing the maintenance burden for
+that code. Longer term, with a more flexible code base, many performance and
+feature improvements could be made and more easily, as the constraints around
+backwards compatibility of the fixed kernel ABI could be relaxed.
+
+While the basic use cases for implementing the OpenFlow forwarding model can be
+achieved in a straightforward manner in OVS-eBPF, implementing the full
+capabilities of the current OVS datapath is more difficult within the bounds of
+the BPF verification engine~\cite{extensible_ovs}. This paper explored an
+additional approach which makes use of another datapath implementation that OVS
+contains in userspace. Rather than building an extensible datapath and
+inserting this logic into the kernel at runtime, the packets can be efficiently
+directed to userspace for network processing using AF\_XDP sockets. The
+userspace datapath implementation has none of the distribution, maintenance or
+compatibility issues that the kernel implementation has, so at face value this
+appears to serve many of the original goals of the OVS-eBPF project.
+
+Over the course of exploring the use of AF\_XDP sockets, multiple design
+choices were made with the goal of optimal performance in mind. Future
+evaluation of this project should investigate the tradeoffs made with these
+decisions, and how they affect the configuration and deployment of the
+implementation. This implementation contains a lot of technical parallels with
+the OVS-DPDK project, which puts certain constraints on deployment such as the
+configuration of devices and the dedication of CPU and memory resources to the
+datapath. In some deployment environments, these may not be feasible
+constraints to place on OVS, and the existing kernel implementation does not
+require such constraints.
+
 \bibliography{paper.bib}
 \bibliographystyle{plain}
 
