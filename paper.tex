@@ -234,7 +234,7 @@ support for layer 3 tunneling protocols.
 \vspace{-1.0em}
 \caption{
 The forwarding plane of OVS consists of two components;
-ovs-vswitch handles the complexity of the OpenFlow protocol, and the
+ovs-vswitchd handles the complexity of the OpenFlow protocol, and the
 datapath acts as a caching layer to optimize the performance.  A flow
 missed by the match/action table in the datapath triggers an {\em
 upcall}, which forwards the information to ovs-vswitchd.  ovs-vswitchd
