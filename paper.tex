@@ -714,7 +714,7 @@ action executed before forwarding the packet to another port.}
 \end{verbatim}
 }
 \vspace{-1.0em}
-\caption{OVS Architecture AF\_XDP}
+\caption{OVS Architecture with AF\_XDP}
 \label{ovsafxdp}
 \vspace{-1.0em}
 \end{figure}
@@ -728,7 +728,7 @@ are all conducted in DPDK's userspace
 library. The dpif-netdev is designed to be agnostic to how the network
 device accessing the packets, by an abstraction layer called netdev.
 Therefore, packets can come from DPDK packet I/O library,
-a Linux AF\_PACKET socket API, or in our case, the AF\_XDP socket interface,
+a Linux AF\_PACKET socket API, or AF\_XDP socket interface,
 as long as each mechanism implements its own netdev interface.
 Once dpif-netdev receives a packet, it follows the same mechanism performing
 parse, lookup the flow table, and apply actions to the packet.
@@ -780,7 +780,7 @@ unload the eBPF program and map.
 
 \subsection{umem memory management}
 In order to properly program Rx/Tx/Fill/Completion rings, we implement a
-umem memory management layer, call umempool. Basically, it's a data structure
+umem memory management layer, call umempool. It is a data structure
 maintaining the unused/available elements in umem with GET and PUT access
 APIs. We will demonstrate the use case of umempool with packet reception and
 transmission in the following subsections.
@@ -840,7 +840,7 @@ we assume that there are only eight umem buffers, and each buffer's
 size is 2KB.  Initially, at step 1, ovs-vswitchd pushes four available umem
 elements into
 the Fill ring and waits for incoming packets.  When there are incoming packets,
-at step 2, the Fill ring's four buffer elements have been consumed and moved
+at step 2, the Fill ring's four buffer elements will be consumed and moved
 to the Rx ring.  In order to keep receiving packets, ovs-vswitchd gets another
 four available umem elements from the umempool, and fills into Fill ring (step 3).
 Then, ovs-vswitchd creates the metadata needed for the four packet
@@ -969,8 +969,8 @@ processing transmission.
 \end{itemize}
 \mycomment{Compared to xdpsock, ovs-vswitchd adds on top of it a umempool,
 and packets parsing, lookup and action execution.}
-With further investigation using Linux perf tools, our first improvement is to
-to enable OVS's Poll-Mode-Driver (PMD) mode to the afxdp netdev.
+With further investigation using Linux perf tools, our first improvement is
+to enable OVS's Poll-Mode-Driver (PMD) mode to the AF\_XDP netdev.
 
 In OVS's non-PMD mode, ovs-vswitchd does packet reception by putting all the
 receiving netdev's file descriptors (fd)s together and invokes the poll system
@@ -1044,11 +1044,12 @@ independent fields.
 % the packet data.
 
 With the above design change, we find that using the LIFO-ptr\_array in
-Section~\ref{memorym} with separated packet metadata allocation yields the
+Section~\ref{memorym} with separated packet metadata allocation for
+metadata allocation yields the
 best performance. It is because both data structures have better spatial
-locality and there are more batching friendly.
+locality and they are more batching friendly.
 For example, accessing 32 packet metadata in an array incurs less cache
-misses than accessing the packet metadata 32 umem chunks.
+misses than accessing the packet metadata in 32 umem chunks.
 The ptr\_array for umempool management outperforms the other two designs
 for the similar reason. With the above design decisions, the OVS rxdrop
 can achieve similar performance as the baseline xdpsock rxdrop at around
@@ -1066,7 +1067,7 @@ By using strace, we find that the OVS-AFXDP l2fwd experiment calls sendto
 system call at very high rate. It is because we design to check the
 completion of send immediately after issusing send as shown in step 3 and
 4 in Figure~\ref{afxdptx}.
-We modify the design by calling sendmsg syscall (step 3) only when TX ring is
+We modify this design by calling sendmsg syscall (step 3) only when TX ring is
 close to full, e.g., when 3/4 ring elements have been used.
 For example, instead of issuing sendmsg syscall for a batch of 32 packets
 and making sure they are finished, we only issue send when there are 512
