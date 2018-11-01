@@ -1,4 +1,4 @@
-\documentclass[10pt,numbers,reprint]{lpc}
+\documentclass[10pt,numbers,reprint,sigconf,authorversion]{lpc}
 
 \usepackage{graphicx}
 \usepackage{url}
@@ -42,23 +42,34 @@
 }
 
 \begin{document}
+\pdfinfo{
+/Title (Bringing the Power of eBPF to Open vSwitch)
+/Author (William Tu, Joe Stringer, Yifeng Sun and Yi-Hung Wei)}
+
 \title{Bringing the Power of eBPF to Open vSwitch}
-\authorinfo{
-  \(
-  \begin{matrix}
-    % Alphabetical order.
-    \textrm{William Tu$^1$} & \textrm{Joe Stringer$^2$} & \textrm{Yifeng Sun$^1$} & \textrm{Yi-Hung Wei$^1$}\\
-    \textrm{u9012063@gmail.com} & \textrm{joe@cilium.io} & \textrm{pkusunyifeng@gmail.com} & \textrm{yihung.wei@gmail.com} \\
-  \end{matrix}
-  \)
-}
-{
-  \(
-  \begin{matrix}
-    \textrm{$^1$VMware Inc.} & \textrm{$^2$Cilium.io}\\
-  \end{matrix}
-  \)
-}{}
+\author{William Tu}
+\affiliation{%
+      \institution{VMware Inc.}}
+\email{u9012063@gmail.com}
+
+\author{Joe Stringer}
+\affiliation{%
+      \institution{Cilium.io}}
+\email{joe@cilium.io}
+
+\author{Yifeng Sun}
+\affiliation{%
+      \institution{VMware Inc.}}
+\email{pkusunyifeng@gmail.com}
+
+\author{Yi-Hung Wei}
+\affiliation{%
+      \institution{VMware Inc.}}
+\email{yihung.wei@gmail.com}
+
+\acmDOI{}
+\setcounter{secnumdepth}{0}
+\setcopyright{none}
 
 \maketitle
 
