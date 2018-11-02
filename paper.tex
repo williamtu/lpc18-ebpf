@@ -105,35 +105,6 @@ datapath in threefold:
 2) offloading a subset of flow processing to XDP (eXpress Data Path),
 and 3) moving the flow processing to userspace by using AF\_XDP.
 
-\begin{figure}
-{\scriptsize
-\begin{verbatim}
-
-+-----------------------+
-|    Network Stack      |
-+---------^-------------+
-          |
-+---------|-------------+
-| Traffic Control (TC)  | --> eBPF TC hook
-+---------^-------------+
-          |
-+---------|-------------+
-|     Driver (XDP)      | --> eBPF XDP hook
-+---------^-------------+
-          |
-+---------|-------------+
-|     Network card      |
-+---------^-------------+
-          |
-          | packets
-
-\end{verbatim}
-}
-\vspace{-1.0em}
-\caption{eBPF program hook points in the Linux kernel.}
-\label{ebpf-hook}
-\vspace{-1.0em}
-\end{figure}
 
 Firstly, in OVS-eBPF project~\cite{extensible_ovs}, we attach flow processing
 eBPF programs to TC. We start with the most aggressive goal that we plan to
@@ -172,6 +143,37 @@ on eBPF, XDP, and AF\_XDP.  We then present the design, implementation, and
 evaluation of the OVS-eBPF and OVS-AFXDP projects in Section~\ref{sec:ebpf}
 and Section~\ref{sec:af_xdp} respectively. Finally,
 Section~\ref{sec:conclusion} concludes the paper and discusses the future work.
+
+\begin{figure}
+{\scriptsize
+\begin{verbatim}
+
++-----------------------+
+|    Network Stack      |
++---------^-------------+
+          |
++---------|-------------+
+| Traffic Control (TC)  | --> eBPF TC hook
++---------^-------------+
+          |
++---------|-------------+
+|     Driver (XDP)      | --> eBPF XDP hook
++---------^-------------+
+          |
++---------|-------------+
+|     Network card      |
++---------^-------------+
+          |
+          | packets
+
+\end{verbatim}
+}
+\vspace{-1.0em}
+\caption{eBPF program hook points in the Linux kernel.}
+\label{ebpf-hook}
+\vspace{-1.0em}
+\end{figure}
+
 \mycomment{
 \begin{table}
 \centering

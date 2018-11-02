@@ -1085,7 +1085,7 @@ Computing Machinery]
   \ifx\acmConference@shortname\@empty
     \gdef\acmConference@shortname{#2}%
   \fi}
-\acmConference[Linux Plumbers Conference'18]{LPC'18}{Nov 2018}{Vancouver,
+\acmConference[Linux Plumbers Conf.]{LPC'18}{Nov 2018}{Vancouver,
   BC, Canada}
 \def\acmBooktitle#1{\gdef\@acmBooktitle{#1}}
 \acmBooktitle{Proceedings of \acmConference@name
