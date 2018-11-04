@@ -377,7 +377,7 @@ that kernel can fill in new incoming packets later on.
 For sending packets, the userspace program pushes a set of descriptors that
 point to the packet buffers to the Tx ring, then issues sendmsg() system call.
 Kernel consumes packet buffers asscoaited with the Tx ring, and pushes
-transmitted descriptors to the Tx ring.
+transmitted descriptors to the Completion ring.
 The userspace program then checks the Completion ring to determine whether the
 packets have been sent.
 In summary, XSK users need to properly program following four rings:
