@@ -97,25 +97,23 @@ and 3) moving the flow processing to userspace by using AF\_XDP.
 \begin{figure}
 {\scriptsize
 \begin{verbatim}
-
-+-----------------------+
-|    Network Stack      |
-+---------^-------------+
-          |
-+---------|-------------+
-| Traffic Control (TC)  | --> eBPF TC hook
-+---------^-------------+
-          |
-+---------|-------------+
-|     Driver (XDP)      | --> eBPF XDP hook
-+---------^-------------+
-          |
-+---------|-------------+
-|     Network card      |
-+---------^-------------+
-          |
-          | packets
-
+            +-----------------------+
+            |    Network Stack      |
+            +---------^-------------+
+                      |
+            +---------|-------------+
+            | Traffic Control (TC)  | --> eBPF TC hook
+            +---------^-------------+
+                      |
+            +---------|-------------+
+            |     Driver (XDP)      | --> eBPF XDP hook
+            +---------^-------------+
+                      |
+            +---------|-------------+
+            |     Network card      |
+            +---------^-------------+
+                      |
+                      | packets
 \end{verbatim}
 }
 \vspace{-1.0em}
@@ -906,7 +904,7 @@ To send packets to eth2 using eth2's XSK, ovs-vswitchd first gets four packet bu
 to eth2's umem at \{4, 5, 6, 7\}.  Later on, TX descriptors for the four packets are
 created and placed into eth2's Tx ring (step 2).
 At step 3, sendmsg syscall is issued to signal the kernel to start the transmission.
-As the send msg syscall in XSK is asynchronous, ovs-vswitchd needs to poll
+As the sendmsg syscall in XSK is asynchronous, ovs-vswitchd needs to poll
 the COMPLETION ring to make sure that these four packets have been sent out
 (step 4).
 Once the four packets' descriptors show up at the COMPLETION ring, at step 5,
